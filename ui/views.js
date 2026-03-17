@@ -189,32 +189,51 @@ function bindDateAutoFormat(input) {
   });
 }
 
-function renderRezeptItemRows(items) {
-  const safe = Array.isArray(items) ? items : [];
-  return [0,1,2].map((idx) => {
-    const item = safe[idx] || {};
-    return `
-      <div class="row" style="gap:12px; align-items:end;">
-        <div style="flex:1; min-width:0;">
-          <label for="item${idx+1}Type">Leistung ${idx+1}</label>
-          <select id="item${idx+1}Type">
+function renderRezeptItemsEditor(items = []) {
+  const safe = Array.isArray(items) && items.length ? items : [{}];
+  return `
+    <div id="leistungenContainer" class="list-stack">
+      ${safe.map((item, idx) => renderRezeptItemRow(item, idx)).join("")}
+    </div>
+    <button id="addLeistungRowBtn" type="button" class="secondary">Leistung hinzufügen</button>
+  `;
+}
+
+function renderRezeptItemRow(item = {}, idx = 0) {
+  return `
+    <div class="compact-card rezept-item-row" data-item-row="${idx}" style="padding:14px;">
+      <div class="row" style="gap:12px; align-items:end; flex-wrap:wrap;">
+        <div style="flex:1; min-width:180px;">
+          <label>Leistung</label>
+          <select class="rezept-item-type">
             <option value="">Bitte wählen</option>
             ${REZEPT_ITEM_OPTIONS.map(opt => `<option value="${escapeHtml(opt)}" ${String(item.type||'')===opt?'selected':''}>${escapeHtml(opt)}</option>`).join('')}
           </select>
         </div>
-        <div style="width:120px;">
-          <label for="item${idx+1}Count">Anzahl</label>
-          <input id="item${idx+1}Count" type="number" inputmode="numeric" min="0" step="1" value="${escapeHtml(item.count || '')}" placeholder="z.B. 6">
+        <div style="width:140px; max-width:100%;">
+          <label>Anzahl</label>
+          <input class="rezept-item-count" type="number" inputmode="numeric" min="0" step="1" value="${escapeHtml(item.count || '')}" placeholder="z.B. 6">
         </div>
       </div>
-    `;
-  }).join('');
+    </div>
+  `;
+}
+
+function bindRezeptItemsEditor(items = []) {
+  const addBtn = document.getElementById("addLeistungRowBtn");
+  if (!addBtn) return;
+  addBtn.onclick = () => {
+    const container = document.getElementById("leistungenContainer");
+    if (!container) return;
+    const idx = container.querySelectorAll("[data-item-row]").length;
+    container.insertAdjacentHTML("beforeend", renderRezeptItemRow({}, idx));
+  };
 }
 
 function collectRezeptItemsFromForm() {
-  return [1,2,3].map((n) => ({
-    type: document.getElementById(`item${n}Type`).value.trim(),
-    count: document.getElementById(`item${n}Count`).value.trim()
+  return Array.from(document.querySelectorAll(".rezept-item-row")).map((row) => ({
+    type: row.querySelector(".rezept-item-type")?.value.trim() || "",
+    count: row.querySelector(".rezept-item-count")?.value.trim() || ""
   })).filter((item) => item.type);
 }
 
@@ -1226,21 +1245,13 @@ export function showCreateRezeptView({ onLock, homeId, patientId }) {
       <label for="ausstell">Ausstellungsdatum</label>
       <input id="ausstell" type="text" placeholder="DD.MM.YYYY" inputmode="numeric">
 
-      <label for="status">Status</label>
-      <select id="status">
-        <option value="Aktiv" selected>Aktiv</option>
-        <option value="Pausiert">Pausiert</option>
-        <option value="Abgeschlossen">Abgeschlossen</option>
-        <option value="Abgegeben">Abgegeben</option>
-      </select>
-
       <div class="row">
         <label><input id="bg" type="checkbox" style="width:auto;"> BG</label>
         <label><input id="dt" type="checkbox" style="width:auto;"> Doppeltermin</label>
       </div>
 
       <h3 style="margin-top:20px;">Leistungen</h3>
-      ${renderRezeptItemRows([])}
+      ${renderRezeptItemsEditor([])}
 
       <button id="saveRezeptBtn">Rezept speichern</button>
       <div id="rezeptMsg"></div>
@@ -1252,6 +1263,7 @@ export function showCreateRezeptView({ onLock, homeId, patientId }) {
   };
 
   bindDateAutoFormat(document.getElementById("ausstell"));
+  bindRezeptItemsEditor([]);
 
   document.getElementById("saveRezeptBtn").onclick = async () => {
     const msg = document.getElementById("rezeptMsg");
@@ -1269,7 +1281,6 @@ export function showCreateRezeptView({ onLock, homeId, patientId }) {
       createRezept(homeId, patientId, {
         arzt: document.getElementById("arzt").value.trim(),
         ausstell: document.getElementById("ausstell").value.trim(),
-        status: document.getElementById("status").value || "Aktiv",
         bg: document.getElementById("bg").checked,
         dt: document.getElementById("dt").checked,
         items
@@ -1316,21 +1327,13 @@ export function showEditRezeptView({ onLock, homeId, patientId, rezeptId }) {
       <label for="ausstell">Ausstellungsdatum</label>
       <input id="ausstell" type="text" inputmode="numeric" value="${escapeHtml(rezept.ausstell || "")}">
 
-      <label for="status">Status</label>
-      <select id="status">
-        <option value="Aktiv" ${rezept.status === "Aktiv" ? "selected" : ""}>Aktiv</option>
-        <option value="Pausiert" ${rezept.status === "Pausiert" ? "selected" : ""}>Pausiert</option>
-        <option value="Abgeschlossen" ${rezept.status === "Abgeschlossen" ? "selected" : ""}>Abgeschlossen</option>
-        <option value="Abgegeben" ${rezept.status === "Abgegeben" ? "selected" : ""}>Abgegeben</option>
-      </select>
-
       <div class="row">
         <label><input id="bg" type="checkbox" style="width:auto;" ${rezept.bg ? "checked" : ""}> BG</label>
         <label><input id="dt" type="checkbox" style="width:auto;" ${rezept.dt ? "checked" : ""}> Doppeltermin</label>
       </div>
 
       <h3 style="margin-top:20px;">Leistungen</h3>
-      ${renderRezeptItemRows(items)}
+      ${renderRezeptItemsEditor(items)}
 
       <button id="updateRezeptBtn">Änderungen speichern</button>
       <div id="rezeptMsg"></div>
@@ -1342,6 +1345,7 @@ export function showEditRezeptView({ onLock, homeId, patientId, rezeptId }) {
   };
 
   bindDateAutoFormat(document.getElementById("ausstell"));
+  bindRezeptItemsEditor(items);
 
   document.getElementById("updateRezeptBtn").onclick = async () => {
     const msg = document.getElementById("rezeptMsg");
@@ -1362,7 +1366,6 @@ export function showEditRezeptView({ onLock, homeId, patientId, rezeptId }) {
       updateRezept(homeId, patientId, rezeptId, {
         arzt: document.getElementById("arzt").value.trim(),
         ausstell: document.getElementById("ausstell").value.trim(),
-        status: document.getElementById("status").value || "Aktiv",
         bg: document.getElementById("bg").checked,
         dt: document.getElementById("dt").checked,
         items: nextItems
