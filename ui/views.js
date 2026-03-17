@@ -160,18 +160,43 @@ function getPatientTimeOverview(data) {
   return rows.sort((a,b)=>collatorDE.compare(a.patientName,b.patientName));
 }
 
+function getAllRezeptOptions(data) {
+  const rows = [];
+  (data?.homes || []).forEach((home) => {
+    (home?.patients || []).forEach((patient) => {
+      (patient?.rezepte || []).forEach((rezept) => {
+        rows.push({
+          value: `${home.homeId}__${patient.patientId}__${rezept.rezeptId}`,
+          label: `${patient.lastName || ""}, ${patient.firstName || ""}`.replace(/^,\s*/, "").trim() + ` · ${rezeptSummary(rezept)}`,
+          homeName: home?.name || ""
+        });
+      });
+    });
+  });
+  return rows.sort((a, b) => collatorDE.compare(a.label, b.label));
+}
+
 function bindCheckChipToggles(root = document) {
   root.querySelectorAll('.check-chip').forEach((chip) => {
+    const input = chip.querySelector('input[type="checkbox"]');
+    if (!input) return;
+
+    const sync = () => {
+      chip.classList.toggle('is-checked', !!input.checked);
+    };
+
+    sync();
+
     if (chip.dataset.bound === '1') return;
     chip.dataset.bound = '1';
     chip.addEventListener('click', (event) => {
-      const input = chip.querySelector('input[type="checkbox"]');
-      if (!input) return;
       if (event.target === input) return;
       event.preventDefault();
       input.checked = !input.checked;
       input.dispatchEvent(new Event('change', { bubbles: true }));
+      sync();
     });
+    input.addEventListener('change', sync);
   });
 }
 
@@ -543,6 +568,31 @@ export function showDashboardView({ onLock }) {
                 </div>
               `).join("")}
             </div>
+            <details class="accordion" style="margin-top:10px;">
+              <summary>
+                <span>Besprechungszeit</span>
+                <span class="muted">mit PIN</span>
+              </summary>
+              <div class="accordion-body">
+                <label for="dashboardTimeRezept">Zielrezept</label>
+                <select id="dashboardTimeRezept">
+                  <option value="">Bitte wählen</option>
+                  ${getAllRezeptOptions(runtimeData).map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)} · ${escapeHtml(item.homeName || '—')}</option>`).join("")}
+                </select>
+
+                <label for="dashboardTimeDate">Datum</label>
+                <input id="dashboardTimeDate" type="text" placeholder="DD.MM.YYYY" inputmode="numeric">
+
+                <label for="dashboardTimeMinutes">Minuten</label>
+                <input id="dashboardTimeMinutes" type="number" min="1" step="1" placeholder="z.B. 60 oder 120" inputmode="numeric">
+
+                <label for="dashboardTimeNote">Notiz</label>
+                <input id="dashboardTimeNote" type="text" placeholder="optional">
+
+                <button id="dashboardSaveTimeBtn">Besprechung speichern</button>
+                <div id="dashboardTimeMsg"></div>
+              </div>
+            </details>
           </details>
         </div>
       </div>
@@ -597,6 +647,57 @@ export function showDashboardView({ onLock }) {
   document.getElementById("openNachbestellBtn").onclick = () => showNachbestellungView({ onLock });
   document.getElementById("openKilometerBtn").onclick = () => showKilometerView({ onLock });
   document.getElementById("lockNowBtn").onclick = onLock;
+
+  const dashboardTimeDate = document.getElementById("dashboardTimeDate");
+  if (dashboardTimeDate) {
+    bindDateAutoFormat(dashboardTimeDate);
+  }
+
+  const dashboardSaveTimeBtn = document.getElementById("dashboardSaveTimeBtn");
+  if (dashboardSaveTimeBtn) {
+    dashboardSaveTimeBtn.onclick = async () => {
+      const target = document.getElementById("dashboardTimeRezept").value.trim();
+      const date = document.getElementById("dashboardTimeDate").value.trim();
+      const minutesValue = document.getElementById("dashboardTimeMinutes").value.trim();
+      const note = document.getElementById("dashboardTimeNote").value.trim();
+      const msg = document.getElementById("dashboardTimeMsg");
+
+      msg.className = "error";
+      msg.textContent = "";
+
+      if (!target) {
+        msg.textContent = "Bitte zuerst ein Zielrezept auswählen.";
+        return;
+      }
+
+      const [homeId, patientId, rezeptId] = target.split("__");
+      const minutes = Number(minutesValue);
+      if (!Number.isFinite(minutes) || minutes <= 0) {
+        msg.textContent = "Bitte gültige Minuten für die Besprechung eingeben.";
+        return;
+      }
+
+      const approvalPin = window.prompt("Bitte PIN vom Abteilungsleiter eingeben:", "");
+      if (approvalPin !== "98918072") {
+        msg.textContent = "PIN vom Abteilungsleiter ist falsch.";
+        return;
+      }
+
+      try {
+        createRezeptTimeEntry(homeId, patientId, rezeptId, {
+          date,
+          minutes,
+          note,
+          confirmed: true
+        });
+        await queuePersistRuntimeData();
+        showDashboardView({ onLock });
+      } catch (err) {
+        console.error(err);
+        msg.textContent = "Besprechungszeit konnte nicht gespeichert werden.";
+      }
+    };
+  }
 
   document.getElementById("exportBackupBtn").onclick = async () => {
     const msg = document.getElementById("backupMsg");
@@ -1454,31 +1555,35 @@ export function showRezeptDetailView({ onLock, homeId, patientId, rezeptId }) {
       <button id="backPatientBtn" class="secondary">Zurück zum Patienten</button>
     </div>
 
-    <div class="card">
-      <h3>Rezeptdaten</h3>
-      <p><strong>Leistungen:</strong> ${escapeHtml(rezeptSummary(rezept))}</p>
-      <p><strong>Arzt:</strong> ${escapeHtml(rezept.arzt || "—")}</p>
-      <p><strong>Ausstellungsdatum:</strong> ${escapeHtml(rezept.ausstell || "—")}</p>
-      <p><strong>Status:</strong> ${escapeHtml(rezept.status || "Aktiv")}</p>
-      <p><strong>BG:</strong> ${rezept.bg ? "Ja" : "Nein"}</p>
-      <p><strong>Doppeltermin:</strong> ${rezept.dt ? "Ja" : "Nein"}</p>
-      <p><strong>Zeit gesamt:</strong> ${escapeHtml(formatMinutesLabel(timeSummary.totalMinutes))}</p>
-      <p><strong>Zeit-Einträge:</strong> ${timeSummary.totalEntries}</p>
-    </div>
+    <details class="accordion" open>
+      <summary>
+        <span>Rezeptdaten</span>
+        <span class="muted">${escapeHtml(rezeptSummary(rezept))}</span>
+      </summary>
+      <div class="accordion-body">
+        <p><strong>Leistungen:</strong> ${escapeHtml(rezeptSummary(rezept))}</p>
+        <p><strong>Arzt:</strong> ${escapeHtml(rezept.arzt || "—")}</p>
+        <p><strong>Ausstellungsdatum:</strong> ${escapeHtml(rezept.ausstell || "—")}</p>
+        <p><strong>Status:</strong> ${escapeHtml(rezept.status || "Aktiv")}</p>
+        <p><strong>BG:</strong> ${rezept.bg ? "Ja" : "Nein"}</p>
+        <p><strong>Doppeltermin:</strong> ${rezept.dt ? "Ja" : "Nein"}</p>
+        <p><strong>Zeit gesamt:</strong> ${escapeHtml(formatMinutesLabel(timeSummary.totalMinutes))}</p>
+        <p><strong>Zeit-Einträge:</strong> ${timeSummary.totalEntries}</p>
+      </div>
+    </details>
 
-    <div class="card">
-      <h3>Fristenhinweis</h3>
-      <p><strong>Status:</strong> ${escapeHtml(frist.statusText || "—")}</p>
-      <p><strong>Hinweis:</strong> ${escapeHtml(frist.detailsText || "—")}</p>
-      <p><strong>Spätester Beginn:</strong> ${escapeHtml(frist.latestStartText || "—")}</p>
-      <p><strong>Gültig bis:</strong> ${escapeHtml(frist.validUntilText || "—")}</p>
-    </div>
-
-    <div class="card">
-      <h3>Zeit-Anbindung aktiv</h3>
-      <p class="muted">Behandlungszeit wird automatisch aus dem Rezept bei jeder Dokumentation gutgeschrieben.</p>
-      <p class="muted"><strong>Rezept-ID:</strong> ${escapeHtml(rezept.rezeptId)}</p>
-    </div>
+    <details class="accordion">
+      <summary>
+        <span>Fristenhinweis</span>
+        <span class="muted">${escapeHtml(frist.statusText || "—")}</span>
+      </summary>
+      <div class="accordion-body">
+        <p><strong>Status:</strong> ${escapeHtml(frist.statusText || "—")}</p>
+        <p><strong>Hinweis:</strong> ${escapeHtml(frist.detailsText || "—")}</p>
+        <p><strong>Spätester Beginn:</strong> ${escapeHtml(frist.latestStartText || "—")}</p>
+        <p><strong>Gültig bis:</strong> ${escapeHtml(frist.validUntilText || "—")}</p>
+      </div>
+    </details>
 
     <div class="card">
       <h3>Dokumentation zu diesem Rezept</h3>
@@ -1494,49 +1599,42 @@ export function showRezeptDetailView({ onLock, homeId, patientId, rezeptId }) {
       <div id="entryMsg"></div>
     </div>
 
-    <div class="card">
-      <h3>Besprechungszeit</h3>
-      <p class="muted">Nur Besprechung darf manuell erfasst werden und benötigt die PIN des Abteilungsleiters.</p>
+    <details class="accordion">
+      <summary>
+        <span>Vorhandene Einträge</span>
+        <span class="muted">${rezept.entries.length}</span>
+      </summary>
+      <div class="accordion-body">
+        ${rezept.entries.length === 0 ? `<p class="muted">Noch keine Dokumentation zu diesem Rezept.</p>` : ""}
+        ${rezept.entries.map(entry => `
+          <div class="card" style="margin-bottom:12px;padding:16px;">
+            <p><strong>${escapeHtml(entry.date || "Ohne Datum")}</strong></p>
+            <p>${escapeHtml(entry.text || "")}</p>
+            <p class="muted">Automatische Zeit: ${escapeHtml(formatMinutesLabel(entry.autoTimeMinutes || 0))}</p>
+            <button class="editEntryBtn secondary" data-entry-id="${entry.entryId}">Eintrag bearbeiten</button>
+          </div>
+        `).join("")}
+      </div>
+    </details>
 
-      <label for="timeDate">Datum</label>
-      <input id="timeDate" type="text" placeholder="DD.MM.YYYY">
-
-      <label for="timeMinutes">Minuten</label>
-      <input id="timeMinutes" type="number" min="1" step="1" placeholder="z.B. 60 oder 120">
-
-      <label for="timeNote">Notiz</label>
-      <input id="timeNote" type="text" placeholder="optional">
-
-      <button id="saveTimeBtn">Besprechung speichern</button>
-      <div id="timeMsg"></div>
-    </div>
-
-    <div class="card">
-      <h3>Vorhandene Einträge</h3>
-      ${rezept.entries.length === 0 ? `<p class="muted">Noch keine Dokumentation zu diesem Rezept.</p>` : ""}
-      ${rezept.entries.map(entry => `
-        <div class="card" style="margin-bottom:12px;padding:16px;">
-          <p><strong>${escapeHtml(entry.date || "Ohne Datum")}</strong></p>
-          <p>${escapeHtml(entry.text || "")}</p>
-          <p class="muted">Automatische Zeit: ${escapeHtml(formatMinutesLabel(entry.autoTimeMinutes || 0))}</p>
-          <button class="editEntryBtn secondary" data-entry-id="${entry.entryId}">Eintrag bearbeiten</button>
-        </div>
-      `).join("")}
-    </div>
-
-    <div class="card">
-      <h3>Zeit-Einträge</h3>
-      <p class="muted">Gesamtzeit: ${escapeHtml(formatMinutesLabel(timeSummary.totalMinutes))}</p>
-      ${timeEntries.length === 0 ? `<p class="muted">Noch keine Zeit zu diesem Rezept erfasst.</p>` : ""}
-      ${timeEntries.map(item => `
-        <div class="card" style="margin-bottom:12px;padding:16px;">
-          <p><strong>${escapeHtml(item.date || "Ohne Datum")}</strong> · ${escapeHtml(formatMinutesLabel(item.minutes))}</p>
-          <p class="muted">Typ: ${escapeHtml(getTimeTypeLabel(item.type))}</p>
-          <p class="muted">Status: ${item.confirmed ? "Bestätigt" : "Offen"}</p>
-          ${item.note ? `<p>${escapeHtml(item.note)}</p>` : ""}
-        </div>
-      `).join("")}
-    </div>
+    <details class="accordion">
+      <summary>
+        <span>Zeit-Einträge</span>
+        <span class="muted">${escapeHtml(formatMinutesLabel(timeSummary.totalMinutes))}</span>
+      </summary>
+      <div class="accordion-body">
+        <p class="muted">Gesamtzeit: ${escapeHtml(formatMinutesLabel(timeSummary.totalMinutes))}</p>
+        ${timeEntries.length === 0 ? `<p class="muted">Noch keine Zeit zu diesem Rezept erfasst.</p>` : ""}
+        ${timeEntries.map(item => `
+          <div class="card" style="margin-bottom:12px;padding:16px;">
+            <p><strong>${escapeHtml(item.date || "Ohne Datum")}</strong> · ${escapeHtml(formatMinutesLabel(item.minutes))}</p>
+            <p class="muted">Typ: ${escapeHtml(getTimeTypeLabel(item.type))}</p>
+            <p class="muted">Status: ${item.confirmed ? "Bestätigt" : "Offen"}</p>
+            ${item.note ? `<p>${escapeHtml(item.note)}</p>` : ""}
+          </div>
+        `).join("")}
+      </div>
+    </details>
   `);
 
   document.getElementById("backPatientBtn").onclick = () => {
@@ -1581,51 +1679,12 @@ ${pendingKm.fromLabel} → ${pendingKm.toLabel}`, "");
         });
       }
 
-      createRezeptEntry(homeId, patientId, rezeptId, {
-        date,
-        text
-      });
+      createRezeptEntry(homeId, patientId, rezeptId, { date, text });
       await queuePersistRuntimeData();
       showRezeptDetailView({ onLock, homeId, patientId, rezeptId });
     } catch (err) {
       console.error(err);
       msg.textContent = err?.message || "Dokumentation konnte nicht gespeichert werden.";
-    }
-  };
-
-  document.getElementById("saveTimeBtn").onclick = async () => {
-    const date = document.getElementById("timeDate").value.trim();
-    const minutesValue = document.getElementById("timeMinutes").value.trim();
-    const note = document.getElementById("timeNote").value.trim();
-    const msg = document.getElementById("timeMsg");
-
-    msg.className = "error";
-    msg.textContent = "";
-
-    const minutes = Number(minutesValue);
-    if (!Number.isFinite(minutes) || minutes <= 0) {
-      msg.textContent = "Bitte gültige Minuten für die Besprechung eingeben.";
-      return;
-    }
-
-    const approvalPin = window.prompt("Bitte PIN vom Abteilungsleiter eingeben:", "");
-    if (approvalPin !== "98918072") {
-      msg.textContent = "PIN vom Abteilungsleiter ist falsch.";
-      return;
-    }
-
-    try {
-      createRezeptTimeEntry(homeId, patientId, rezeptId, {
-        date,
-        minutes,
-        note,
-        confirmed: true
-      });
-      await queuePersistRuntimeData();
-      showRezeptDetailView({ onLock, homeId, patientId, rezeptId });
-    } catch (err) {
-      console.error(err);
-      msg.textContent = "Besprechungszeit konnte nicht gespeichert werden.";
     }
   };
 
@@ -1641,6 +1700,7 @@ ${pendingKm.fromLabel} → ${pendingKm.toLabel}`, "");
     };
   });
 }
+
 export function showEditRezeptEntryView({ onLock, homeId, patientId, rezeptId, entryId }) {
   bindLockButton(onLock);
   setCurrentView("entry-edit", { homeId, patientId, rezeptId, entryId });
