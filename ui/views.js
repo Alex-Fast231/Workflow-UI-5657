@@ -854,11 +854,11 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
                   ${patient.verstorben ? `<span class="pill-red">Verstorben</span>` : ""}
                 </div>
 
-                <div class="row" style="margin-bottom:10px;">
+                <div class="inline-action-stack" style="margin-bottom:10px;">
                   <button class="patientSectionBtn secondary" data-target="patient-rezepte-${patient.patientId}">Rezept</button>
                   <button class="patientSectionBtn secondary" data-target="patient-stammdaten-${patient.patientId}">Stammdaten</button>
                 </div>
-                <div class="row" style="margin-bottom:12px;">
+                <div class="inline-action-stack" style="margin-bottom:12px;">
                   <button class="patientSectionBtn secondary" data-target="patient-schnelldoku-${patient.patientId}">SchnellDoku</button>
                 </div>
 
@@ -886,7 +886,7 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
                                 Doku-Einträge: ${rezept.entries?.length || 0}<br>
                                 Zeit gesamt: ${escapeHtml(formatMinutesLabel(getRezeptTimeSummary(rezept).totalMinutes))}
                               </div>
-                              <div class="row" style="margin-top:10px;">
+                              <div class="inline-action-stack" style="margin-top:10px;">
                                 <button class="openRezeptBtn" data-patient-id="${patient.patientId}" data-rezept-id="${rezept.rezeptId}">Dokumentieren</button>
                                 <button class="editRezeptBtn secondary" data-patient-id="${patient.patientId}" data-rezept-id="${rezept.rezeptId}">Bearbeiten</button>
                               </div>
@@ -940,10 +940,10 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
                   <label for="edit-birthDate-${patient.patientId}">Geburtsdatum</label>
                   <input id="edit-birthDate-${patient.patientId}" type="text" value="${escapeHtml(patient.birthDate || "")}" inputmode="numeric" placeholder="DD.MM.YYYY">
 
-                  <div class="row">
-                    <label><input id="edit-befreit-${patient.patientId}" type="checkbox" style="width:auto;" ${patient.befreit ? "checked" : ""}> Befreit</label>
-                    <label><input id="edit-hb-${patient.patientId}" type="checkbox" style="width:auto;" ${patient.hb ? "checked" : ""}> Hausbesuch</label>
-                    <label><input id="edit-verstorben-${patient.patientId}" type="checkbox" style="width:auto;" ${patient.verstorben ? "checked" : ""}> Verstorben</label>
+                  <div class="checkbox-row">
+                    <label class="check-chip"><input id="edit-befreit-${patient.patientId}" type="checkbox" ${patient.befreit ? "checked" : ""}> <span>Befreit</span></label>
+                    <label class="check-chip"><input id="edit-hb-${patient.patientId}" type="checkbox" ${patient.hb ? "checked" : ""}> <span>Hausbesuch</span></label>
+                    <label class="check-chip"><input id="edit-verstorben-${patient.patientId}" type="checkbox" ${patient.verstorben ? "checked" : ""}> <span>Verstorben</span></label>
                   </div>
 
                   <button class="savePatientDataBtn" data-patient-id="${patient.patientId}">Stammdaten speichern</button>
@@ -1245,9 +1245,9 @@ export function showCreateRezeptView({ onLock, homeId, patientId }) {
       <label for="ausstell">Ausstellungsdatum</label>
       <input id="ausstell" type="text" placeholder="DD.MM.YYYY" inputmode="numeric">
 
-      <div class="row">
-        <label><input id="bg" type="checkbox" style="width:auto;"> BG</label>
-        <label><input id="dt" type="checkbox" style="width:auto;"> Doppeltermin</label>
+      <div class="checkbox-row">
+        <label class="check-chip"><input id="bg" type="checkbox"> <span>BG</span></label>
+        <label class="check-chip"><input id="dt" type="checkbox"> <span>Doppeltermin</span></label>
       </div>
 
       <h3 style="margin-top:20px;">Leistungen</h3>
@@ -1327,9 +1327,9 @@ export function showEditRezeptView({ onLock, homeId, patientId, rezeptId }) {
       <label for="ausstell">Ausstellungsdatum</label>
       <input id="ausstell" type="text" inputmode="numeric" value="${escapeHtml(rezept.ausstell || "")}">
 
-      <div class="row">
-        <label><input id="bg" type="checkbox" style="width:auto;" ${rezept.bg ? "checked" : ""}> BG</label>
-        <label><input id="dt" type="checkbox" style="width:auto;" ${rezept.dt ? "checked" : ""}> Doppeltermin</label>
+      <div class="checkbox-row">
+        <label class="check-chip"><input id="bg" type="checkbox" ${rezept.bg ? "checked" : ""}> <span>BG</span></label>
+        <label class="check-chip"><input id="dt" type="checkbox" ${rezept.dt ? "checked" : ""}> <span>Doppeltermin</span></label>
       </div>
 
       <h3 style="margin-top:20px;">Leistungen</h3>
