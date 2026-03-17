@@ -219,6 +219,23 @@ function bindQuickDocSelectionStyles(root = document) {
   });
 }
 
+function bindSelectableCardChecks(root = document) {
+  root.querySelectorAll('.selectable-card').forEach((card) => {
+    const input = card.querySelector('input[type="checkbox"]');
+    if (!input) return;
+
+    const sync = () => {
+      card.classList.toggle('is-selected', !!input.checked);
+    };
+
+    sync();
+
+    if (input.dataset.boundCard === '1') return;
+    input.dataset.boundCard = '1';
+    input.addEventListener('change', sync);
+  });
+}
+
 
 function getTimeTypeLabel(type) {
   if (type === "besprechung") return "Besprechung";
@@ -1135,6 +1152,7 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
   document.querySelectorAll('[id^="edit-birthDate-"]').forEach((el) => bindDateAutoFormat(el));
   bindCheckChipToggles(app);
   bindQuickDocSelectionStyles(app);
+  bindSelectableCardChecks(app);
 
   document.getElementById("createPatientBtn").onclick = async () => {
     const firstName = document.getElementById("firstName").value.trim();
@@ -1248,8 +1266,31 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
       }
 
       try {
+        const quickDate = formatCurrentDateShort();
+        const pendingKm = getPendingKilometerContext(homeId, patientId, quickDate);
+        if (pendingKm.needsKmInput) {
+          const entered = window.prompt(`Bitte Entfernung eingeben:
+${pendingKm.fromLabel} → ${pendingKm.toLabel}`, "");
+          if (entered === null) {
+            msg.textContent = 'SchnellDoku abgebrochen, da die Kilometer nicht eingegeben wurden.';
+            return;
+          }
+          const kmValue = Number(String(entered).replace(',', '.'));
+          if (!Number.isFinite(kmValue) || kmValue <= 0) {
+            msg.textContent = 'Bitte gültige Kilometer für die neue Strecke eingeben.';
+            return;
+          }
+          saveKnownKilometerRoute({
+            fromPointId: pendingKm.fromPointId,
+            toPointId: pendingKm.toPointId,
+            fromLabel: pendingKm.fromLabel,
+            toLabel: pendingKm.toLabel,
+            km: kmValue
+          });
+        }
+
         createRezeptEntry(homeId, patientId, targetRezeptId, {
-          date: formatCurrentDateShort(),
+          date: quickDate,
           text
         });
         await queuePersistRuntimeData();
@@ -1431,6 +1472,7 @@ export function showCreateRezeptView({ onLock, homeId, patientId }) {
   bindRezeptItemsEditor([]);
   bindCheckChipToggles(app);
   bindQuickDocSelectionStyles(app);
+  bindSelectableCardChecks(app);
 
   document.getElementById("saveRezeptBtn").onclick = async () => {
     const msg = document.getElementById("rezeptMsg");
@@ -1515,6 +1557,7 @@ export function showEditRezeptView({ onLock, homeId, patientId, rezeptId }) {
   bindRezeptItemsEditor(items);
   bindCheckChipToggles(app);
   bindQuickDocSelectionStyles(app);
+  bindSelectableCardChecks(app);
 
   document.getElementById("updateRezeptBtn").onclick = async () => {
     const msg = document.getElementById("rezeptMsg");
@@ -1836,7 +1879,7 @@ export function showAbgabeView({ onLock, searchText = "", selectedIds = [] }) {
                     </div>
 
                     ${rezeptRows.map(row => `
-                      <div class="compact-card">
+                      <div class="compact-card selectable-card">
                         <label style="display:flex; gap:10px; align-items:flex-start; font-weight:normal;">
                           <input class="abgabeCheck" type="checkbox" data-row-id="${row.rowId}" style="width:auto;" ${selected.has(row.rowId) ? "checked" : ""}>
                           <span>
