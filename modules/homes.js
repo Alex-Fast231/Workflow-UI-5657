@@ -613,11 +613,16 @@ export function createRezeptEntry(homeId, patientId, rezeptId, payload) {
 
     const entryId = generateId("entry");
     let linkedTimeEntryId = "";
+    const entryDate = normalizeDateString(payload.date);
     const autoMinutes = getAutomaticTreatmentMinutes(rezept);
+    const alreadyCreditedToday = (rezept.timeEntries || []).some((item) => {
+      const itemDate = normalizeDateString(item?.date);
+      return item.type === "behandlung" && itemDate === entryDate;
+    });
 
-    if (autoMinutes > 0) {
+    if (autoMinutes > 0 && !alreadyCreditedToday) {
       const timeEntry = createTimeEntryObject({
-        date: (payload.date || "").trim(),
+        date: entryDate,
         minutes: autoMinutes,
         type: "behandlung",
         note: "Automatisch aus Dokumentation",
@@ -631,7 +636,7 @@ export function createRezeptEntry(homeId, patientId, rezeptId, payload) {
 
     rezept.entries.push({
       entryId,
-      date: (payload.date || "").trim(),
+      date: entryDate,
       text: (payload.text || "").trim(),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),

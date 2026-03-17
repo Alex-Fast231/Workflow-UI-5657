@@ -835,9 +835,11 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
                   ${patient.verstorben ? `<span class="pill-red">Verstorben</span>` : ""}
                 </div>
 
-                <div class="row" style="margin-bottom:12px;">
+                <div class="row" style="margin-bottom:10px;">
                   <button class="patientSectionBtn secondary" data-target="patient-rezepte-${patient.patientId}">Rezept</button>
                   <button class="patientSectionBtn secondary" data-target="patient-stammdaten-${patient.patientId}">Stammdaten</button>
+                </div>
+                <div class="row" style="margin-bottom:12px;">
                   <button class="patientSectionBtn secondary" data-target="patient-schnelldoku-${patient.patientId}">SchnellDoku</button>
                 </div>
 
@@ -902,7 +904,9 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
                   `}
 
                   <label for="quickDocText-${patient.patientId}">Dokumentation</label>
-                  <textarea id="quickDocText-${patient.patientId}" rows="4" placeholder="Dokumentation direkt zum Rezept speichern"></textarea>
+                  <div class="compact-card" style="margin-bottom:10px; padding:14px;">
+                    <textarea id="quickDocText-${patient.patientId}" rows="4" placeholder="Dokumentation direkt zum Rezept speichern" style="width:100%; border:none; outline:none; resize:vertical; background:transparent; font:inherit; color:inherit; min-height:96px;"></textarea>
+                  </div>
                   <button class="saveQuickDocBtn" data-patient-id="${patient.patientId}" ${rezepte.length===0?'disabled':''}>SchnellDoku speichern</button>
                   <div id="quickDocMsg-${patient.patientId}"></div>
                 </div>
