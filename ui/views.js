@@ -163,6 +163,14 @@ function formatCurrentDateLong(date = new Date()) {
   });
 }
 
+function formatCurrentDateShort(date = new Date()) {
+  return date.toLocaleDateString("de-DE", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric"
+  });
+}
+
 const REZEPT_ITEM_OPTIONS = ["KG", "MT", "KG-ZNS", "MLD30", "MLD45", "MLD60", "Blanko"];
 
 function getKnownDoctorNames(data) {
@@ -830,6 +838,7 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
                 <div class="row" style="margin-bottom:12px;">
                   <button class="patientSectionBtn secondary" data-target="patient-rezepte-${patient.patientId}">Rezept</button>
                   <button class="patientSectionBtn secondary" data-target="patient-stammdaten-${patient.patientId}">Stammdaten</button>
+                  <button class="patientSectionBtn secondary" data-target="patient-schnelldoku-${patient.patientId}">SchnellDoku</button>
                 </div>
 
                 <div id="patient-rezepte-${patient.patientId}" class="patient-inline-section" style="display:none; margin-bottom:12px;">
@@ -866,6 +875,36 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
                       }).join("")}
                     </div>
                   `}
+                </div>
+
+                <div id="patient-schnelldoku-${patient.patientId}" class="patient-inline-section" style="display:none; margin-bottom:12px;">
+                  <div class="compact-meta" style="margin-bottom:10px;">Datum wird automatisch gesetzt: ${escapeHtml(formatCurrentDateShort())}</div>
+                  ${rezepte.length === 0 ? `<p class="muted">Keine Rezepte für SchnellDoku vorhanden.</p>` : rezepte.length === 1 ? `
+                    <div class="compact-card" style="margin-bottom:10px;">
+                      <div style="font-weight:600; margin-bottom:6px;">Zielrezept</div>
+                      <div class="compact-meta">${escapeHtml(rezeptSummary(rezepte[0]))}</div>
+                    </div>
+                  ` : `
+                    <div class="compact-card" style="margin-bottom:10px;">
+                      <div style="font-weight:600; margin-bottom:6px;">Rezept auswählen</div>
+                      <div class="list-stack">
+                        ${rezepte.map(rezept => `
+                          <label style="display:flex; gap:10px; align-items:flex-start; font-weight:normal;">
+                            <input class="quickDocRezeptCheck" type="checkbox" data-patient-id="${patient.patientId}" data-rezept-id="${rezept.rezeptId}" style="width:auto; margin-top:3px;">
+                            <span>
+                              <strong>${escapeHtml(rezeptSummary(rezept))}</strong><br>
+                              <span class="muted">Arzt: ${escapeHtml(rezept.arzt || "—")}</span>
+                            </span>
+                          </label>
+                        `).join("")}
+                      </div>
+                    </div>
+                  `}
+
+                  <label for="quickDocText-${patient.patientId}">Dokumentation</label>
+                  <textarea id="quickDocText-${patient.patientId}" rows="4" placeholder="Dokumentation direkt zum Rezept speichern"></textarea>
+                  <button class="saveQuickDocBtn" data-patient-id="${patient.patientId}" ${rezepte.length===0?'disabled':''}>SchnellDoku speichern</button>
+                  <div id="quickDocMsg-${patient.patientId}"></div>
                 </div>
 
                 <div id="patient-stammdaten-${patient.patientId}" class="patient-inline-section" style="display:none;">
@@ -979,6 +1018,58 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
         patientId: btn.dataset.patientId,
         rezeptId: btn.dataset.rezeptId
       });
+    };
+  });
+
+  document.querySelectorAll('.quickDocRezeptCheck').forEach((check) => {
+    check.addEventListener('change', () => {
+      if (!check.checked) return;
+      const patientId = check.dataset.patientId;
+      document.querySelectorAll(`.quickDocRezeptCheck[data-patient-id="${patientId}"]`).forEach((other) => {
+        if (other !== check) other.checked = false;
+      });
+    });
+  });
+
+  document.querySelectorAll('.saveQuickDocBtn').forEach((btn) => {
+    btn.onclick = async () => {
+      const patientId = btn.dataset.patientId;
+      const patient = getPatientById(home, patientId);
+      const rezepte = sortRezepteForDisplay(patient?.rezepte || []);
+      const msg = document.getElementById(`quickDocMsg-${patientId}`);
+      const text = document.getElementById(`quickDocText-${patientId}`).value.trim();
+
+      msg.className = 'error';
+      msg.textContent = '';
+
+      if (!text) {
+        msg.textContent = 'Bitte einen Dokumentationstext eingeben.';
+        return;
+      }
+
+      let targetRezeptId = '';
+      if (rezepte.length === 1) {
+        targetRezeptId = rezepte[0].rezeptId;
+      } else {
+        const checked = document.querySelector(`.quickDocRezeptCheck[data-patient-id="${patientId}"]:checked`);
+        if (!checked) {
+          msg.textContent = 'Bitte genau ein Rezept auswählen.';
+          return;
+        }
+        targetRezeptId = checked.dataset.rezeptId;
+      }
+
+      try {
+        createRezeptEntry(homeId, patientId, targetRezeptId, {
+          date: formatCurrentDateShort(),
+          text
+        });
+        await queuePersistRuntimeData();
+        showHomeDetailView({ onLock, homeId, searchText });
+      } catch (err) {
+        console.error(err);
+        msg.textContent = 'SchnellDoku konnte nicht gespeichert werden.';
+      }
     };
   });
 
