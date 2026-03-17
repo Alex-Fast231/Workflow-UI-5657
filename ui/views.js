@@ -200,6 +200,25 @@ function bindCheckChipToggles(root = document) {
   });
 }
 
+function bindQuickDocSelectionStyles(root = document) {
+  const checks = root.querySelectorAll('.quickDocRezeptCheck');
+
+  const syncGroup = (patientId) => {
+    root.querySelectorAll(`.quick-doc-chip[data-patient-id="${patientId}"]`).forEach((chip) => {
+      const input = chip.querySelector('.quickDocRezeptCheck');
+      chip.classList.toggle('is-checked', !!input?.checked);
+    });
+  };
+
+  checks.forEach((check) => {
+    const patientId = check.dataset.patientId;
+    syncGroup(patientId);
+    if (check.dataset.bound === '1') return;
+    check.dataset.bound = '1';
+    check.addEventListener('change', () => syncGroup(patientId));
+  });
+}
+
 
 function getTimeTypeLabel(type) {
   if (type === "besprechung") return "Besprechung";
@@ -549,31 +568,28 @@ export function showDashboardView({ onLock }) {
     <details class="accordion">
       <summary>
         <span>Überblick</span>
-        <span class="muted">Heime & Stunden</span>
+        <span class="muted">Stunden</span>
       </summary>
       <div class="accordion-body">
-        <div class="row">
-          <div class="compact-card">
-            <div style="font-weight:700;">Heime</div>
-            <div class="compact-meta">${homes.length}</div>
-          </div>
-          <details class="compact-card" style="margin:0; flex:1 1 220px;">
-            <summary style="cursor:pointer; list-style:none; font-weight:700;">Stunden</summary>
-            <div class="compact-meta" style="margin-top:6px;">${escapeHtml(formatMinutesLabel(totalTrackedMinutes))}</div>
-            <div style="margin-top:10px;" class="list-stack">
-              ${getPatientTimeOverview(runtimeData).length === 0 ? `<p class="muted">Noch keine Zeiten erfasst.</p>` : getPatientTimeOverview(runtimeData).map((row) => `
-                <div class="compact-card" style="margin:0; padding:10px;">
-                  <div style="font-weight:600;">${escapeHtml(row.patientName)}</div>
-                  <div class="compact-meta">${escapeHtml(row.homeName || '—')}<br>${escapeHtml(formatMinutesLabel(row.totalMinutes))}</div>
-                </div>
-              `).join("")}
+        <div class="compact-card" style="margin:0;">
+          <div style="font-weight:700; margin-bottom:6px;">Stunden</div>
+          <div class="compact-meta" style="font-size:16px; font-weight:700; color:var(--text);">${escapeHtml(formatMinutesLabel(totalTrackedMinutes))}</div>
+          <div class="compact-meta" style="margin-top:6px;">Aktuell geleistete Zeit</div>
+        </div>
+        <div style="margin-top:10px;" class="list-stack">
+          ${getPatientTimeOverview(runtimeData).length === 0 ? `<p class="muted">Noch keine Zeiten erfasst.</p>` : getPatientTimeOverview(runtimeData).map((row) => `
+            <div class="compact-card" style="margin:0; padding:10px;">
+              <div style="font-weight:600;">${escapeHtml(row.patientName)}</div>
+              <div class="compact-meta">${escapeHtml(row.homeName || '—')}<br>${escapeHtml(formatMinutesLabel(row.totalMinutes))}</div>
             </div>
-            <details class="accordion" style="margin-top:10px;">
-              <summary>
-                <span>Besprechungszeit</span>
-                <span class="muted">mit PIN</span>
-              </summary>
-              <div class="accordion-body">
+          `).join("")}
+        </div>
+        <details class="accordion" style="margin-top:10px;">
+          <summary>
+            <span>Besprechungszeit</span>
+            <span class="muted">mit PIN</span>
+          </summary>
+          <div class="accordion-body">
                 <label for="dashboardTimeRezept">Zielrezept</label>
                 <select id="dashboardTimeRezept">
                   <option value="">Bitte wählen</option>
@@ -1049,19 +1065,19 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
                   <div class="compact-meta" style="margin-bottom:10px;">Datum wird automatisch gesetzt: ${escapeHtml(formatCurrentDateShort())}</div>
                   ${rezepte.length === 0 ? `<p class="muted">Keine Rezepte für SchnellDoku vorhanden.</p>` : rezepte.length === 1 ? `
                     <div class="compact-card" style="margin-bottom:10px;">
-                      <div style="font-weight:600; margin-bottom:6px;">Zielrezept</div>
+                      <div style="font-weight:600; margin-bottom:6px;">Zielrezept vom: ${escapeHtml(rezepte[0].ausstell || "—")}</div>
                       <div class="compact-meta">${escapeHtml(rezeptSummary(rezepte[0]))}</div>
                     </div>
                   ` : `
                     <div class="compact-card" style="margin-bottom:10px;">
-                      <div style="font-weight:600; margin-bottom:6px;">Rezept auswählen</div>
+                      <div style="font-weight:600; margin-bottom:6px;">Zielrezept auswählen</div>
                       <div class="list-stack">
                         ${rezepte.map(rezept => `
-                          <label style="display:flex; gap:10px; align-items:flex-start; font-weight:normal;">
-                            <input class="quickDocRezeptCheck" type="checkbox" data-patient-id="${patient.patientId}" data-rezept-id="${rezept.rezeptId}" style="width:auto; margin-top:3px;">
+                          <label class="check-chip quick-doc-chip" data-patient-id="${patient.patientId}" data-rezept-id="${rezept.rezeptId}" style="flex:1 1 auto;">
+                            <input class="quickDocRezeptCheck" type="checkbox" data-patient-id="${patient.patientId}" data-rezept-id="${rezept.rezeptId}">
                             <span>
-                              <strong>${escapeHtml(rezeptSummary(rezept))}</strong><br>
-                              <span class="muted">Arzt: ${escapeHtml(rezept.arzt || "—")}</span>
+                              <strong>Zielrezept vom: ${escapeHtml(rezept.ausstell || "—")}</strong><br>
+                              <span class="muted">${escapeHtml(rezeptSummary(rezept))}</span>
                             </span>
                           </label>
                         `).join("")}
@@ -1118,6 +1134,7 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
   bindDateAutoFormat(document.getElementById("birthDate"));
   document.querySelectorAll('[id^="edit-birthDate-"]').forEach((el) => bindDateAutoFormat(el));
   bindCheckChipToggles(app);
+  bindQuickDocSelectionStyles(app);
 
   document.getElementById("createPatientBtn").onclick = async () => {
     const firstName = document.getElementById("firstName").value.trim();
@@ -1413,6 +1430,7 @@ export function showCreateRezeptView({ onLock, homeId, patientId }) {
   bindDateAutoFormat(document.getElementById("ausstell"));
   bindRezeptItemsEditor([]);
   bindCheckChipToggles(app);
+  bindQuickDocSelectionStyles(app);
 
   document.getElementById("saveRezeptBtn").onclick = async () => {
     const msg = document.getElementById("rezeptMsg");
@@ -1496,6 +1514,7 @@ export function showEditRezeptView({ onLock, homeId, patientId, rezeptId }) {
   bindDateAutoFormat(document.getElementById("ausstell"));
   bindRezeptItemsEditor(items);
   bindCheckChipToggles(app);
+  bindQuickDocSelectionStyles(app);
 
   document.getElementById("updateRezeptBtn").onclick = async () => {
     const msg = document.getElementById("rezeptMsg");
