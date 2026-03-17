@@ -137,6 +137,44 @@ function getTotalTrackedMinutes(data) {
   return total;
 }
 
+function getPatientTimeOverview(data) {
+  const rows = [];
+  (data?.homes || []).forEach((home) => {
+    (home?.patients || []).forEach((patient) => {
+      let total = 0;
+      (patient?.rezepte || []).forEach((rezept) => {
+        (rezept?.timeEntries || []).forEach((entry) => {
+          const minutes = Number(entry?.minutes || 0);
+          if (Number.isFinite(minutes)) total += minutes;
+        });
+      });
+      if (total > 0) {
+        rows.push({
+          patientName: `${patient?.lastName || ""}, ${patient?.firstName || ""}`.replace(/^,\s*/, "").trim() || 'Ohne Namen',
+          homeName: home?.name || '',
+          totalMinutes: total
+        });
+      }
+    });
+  });
+  return rows.sort((a,b)=>collatorDE.compare(a.patientName,b.patientName));
+}
+
+function bindCheckChipToggles(root = document) {
+  root.querySelectorAll('.check-chip').forEach((chip) => {
+    if (chip.dataset.bound === '1') return;
+    chip.dataset.bound = '1';
+    chip.addEventListener('click', (event) => {
+      const input = chip.querySelector('input[type="checkbox"]');
+      if (!input) return;
+      if (event.target === input) return;
+      event.preventDefault();
+      input.checked = !input.checked;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
+}
+
 
 function getTimeTypeLabel(type) {
   if (type === "besprechung") return "Besprechung";
@@ -494,10 +532,18 @@ export function showDashboardView({ onLock }) {
             <div style="font-weight:700;">Heime</div>
             <div class="compact-meta">${homes.length}</div>
           </div>
-          <div class="compact-card">
-            <div style="font-weight:700;">Stunden</div>
-            <div class="compact-meta">${escapeHtml(formatMinutesLabel(totalTrackedMinutes))}</div>
-          </div>
+          <details class="compact-card" style="margin:0; flex:1 1 220px;">
+            <summary style="cursor:pointer; list-style:none; font-weight:700;">Stunden</summary>
+            <div class="compact-meta" style="margin-top:6px;">${escapeHtml(formatMinutesLabel(totalTrackedMinutes))}</div>
+            <div style="margin-top:10px;" class="list-stack">
+              ${getPatientTimeOverview(runtimeData).length === 0 ? `<p class="muted">Noch keine Zeiten erfasst.</p>` : getPatientTimeOverview(runtimeData).map((row) => `
+                <div class="compact-card" style="margin:0; padding:10px;">
+                  <div style="font-weight:600;">${escapeHtml(row.patientName)}</div>
+                  <div class="compact-meta">${escapeHtml(row.homeName || '—')}<br>${escapeHtml(formatMinutesLabel(row.totalMinutes))}</div>
+                </div>
+              `).join("")}
+            </div>
+          </details>
         </div>
       </div>
     </details>
@@ -817,19 +863,19 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
             <button id="clearPatientSearchBtn" class="secondary">Suche löschen</button>
           </div>
 
-          <label for="firstName">Vorname</label>
-          <input id="firstName" type="text">
-
           <label for="lastName">Nachname</label>
           <input id="lastName" type="text">
+
+          <label for="firstName">Vorname</label>
+          <input id="firstName" type="text">
 
           <label for="birthDate">Geburtsdatum</label>
           <input id="birthDate" type="text" placeholder="DD.MM.YYYY" inputmode="numeric">
 
-          <div class="row">
-            <label><input id="befreit" type="checkbox" style="width:auto;"> Befreit</label>
-            <label><input id="hb" type="checkbox" style="width:auto;"> Hausbesuch</label>
-            <label><input id="verstorben" type="checkbox" style="width:auto;"> Verstorben</label>
+          <div class="checkbox-row">
+            <label class="check-chip"><input id="befreit" type="checkbox"> <span>Befreit</span></label>
+            <label class="check-chip"><input id="hb" type="checkbox"> <span>Hausbesuch</span></label>
+            <label class="check-chip"><input id="verstorben" type="checkbox"> <span>Verstorben</span></label>
           </div>
 
           <button id="createPatientBtn">Patient speichern</button>
@@ -931,11 +977,11 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
                 </div>
 
                 <div id="patient-stammdaten-${patient.patientId}" class="patient-inline-section" style="display:none;">
-                  <label for="edit-firstName-${patient.patientId}">Vorname</label>
-                  <input id="edit-firstName-${patient.patientId}" type="text" value="${escapeHtml(patient.firstName || "")}">
-
                   <label for="edit-lastName-${patient.patientId}">Nachname</label>
                   <input id="edit-lastName-${patient.patientId}" type="text" value="${escapeHtml(patient.lastName || "")}">
+
+                  <label for="edit-firstName-${patient.patientId}">Vorname</label>
+                  <input id="edit-firstName-${patient.patientId}" type="text" value="${escapeHtml(patient.firstName || "")}">
 
                   <label for="edit-birthDate-${patient.patientId}">Geburtsdatum</label>
                   <input id="edit-birthDate-${patient.patientId}" type="text" value="${escapeHtml(patient.birthDate || "")}" inputmode="numeric" placeholder="DD.MM.YYYY">
@@ -970,6 +1016,7 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
 
   bindDateAutoFormat(document.getElementById("birthDate"));
   document.querySelectorAll('[id^="edit-birthDate-"]').forEach((el) => bindDateAutoFormat(el));
+  bindCheckChipToggles(app);
 
   document.getElementById("createPatientBtn").onclick = async () => {
     const firstName = document.getElementById("firstName").value.trim();
@@ -1264,6 +1311,7 @@ export function showCreateRezeptView({ onLock, homeId, patientId }) {
 
   bindDateAutoFormat(document.getElementById("ausstell"));
   bindRezeptItemsEditor([]);
+  bindCheckChipToggles(app);
 
   document.getElementById("saveRezeptBtn").onclick = async () => {
     const msg = document.getElementById("rezeptMsg");
@@ -1346,6 +1394,7 @@ export function showEditRezeptView({ onLock, homeId, patientId, rezeptId }) {
 
   bindDateAutoFormat(document.getElementById("ausstell"));
   bindRezeptItemsEditor(items);
+  bindCheckChipToggles(app);
 
   document.getElementById("updateRezeptBtn").onclick = async () => {
     const msg = document.getElementById("rezeptMsg");
