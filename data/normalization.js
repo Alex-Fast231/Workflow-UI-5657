@@ -229,6 +229,7 @@ export function finalizeAppStructure(data) {
     settings: {
       therapistName: ensureString(settings.therapistName),
       therapistFax: ensureString(settings.therapistFax),
+      practicePhone: ensureString(settings.practicePhone),
       practiceAddress: ensureString(settings.practiceAddress, PRACTICE_ADDRESS),
       privacyMode: ["full", "privacy"].includes(settings.privacyMode) ? settings.privacyMode : "full",
       createdAt: ensureString(settings.createdAt, now),

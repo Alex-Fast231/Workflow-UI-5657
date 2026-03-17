@@ -416,6 +416,13 @@ export function showSetupView({ onSuccess }) {
       <label for="therapistName">Therapeutenname</label>
       <input id="therapistName" type="text" autocomplete="off">
 
+      <label for="practiceAddress">Praxisadresse</label>
+      <textarea id="practiceAddress" rows="3" autocomplete="off">Münchener Str. 155
+85051 Ingolstadt</textarea>
+
+      <label for="practicePhone">Telefon</label>
+      <input id="practicePhone" type="tel" inputmode="numeric" autocomplete="off">
+
       <label for="therapistFax">Faxnummer</label>
       <input id="therapistFax" type="tel" inputmode="numeric" autocomplete="off">
 
@@ -435,6 +442,8 @@ export function showSetupView({ onSuccess }) {
 
   document.getElementById("saveSetupBtn").onclick = async () => {
     const therapistName = document.getElementById("therapistName").value.trim();
+    const practiceAddress = document.getElementById("practiceAddress").value.trim();
+    const practicePhone = document.getElementById("practicePhone").value.trim();
     const therapistFax = document.getElementById("therapistFax").value.trim();
     const password = document.getElementById("practicePassword").value;
     const pin = document.getElementById("workflowPin").value;
@@ -462,6 +471,8 @@ export function showSetupView({ onSuccess }) {
     try {
       const initialAppData = createEmptyAppData();
       initialAppData.settings.therapistName = therapistName;
+      initialAppData.settings.practiceAddress = practiceAddress;
+      initialAppData.settings.practicePhone = practicePhone;
       initialAppData.settings.therapistFax = therapistFax;
 
       const session = await setupSecurity({
@@ -1941,6 +1952,8 @@ export function showAbgabeView({ onLock, searchText = "", selectedIds = [] }) {
     </details>
   `);
 
+  bindSelectableCardChecks(app);
+
   document.getElementById("backDashboardBtn").onclick = () => showDashboardView({ onLock });
 
   document.getElementById("runAbgabeSearchBtn").onclick = () => {
@@ -2310,6 +2323,8 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "" }) 
       </div>
     </details>
   `);
+
+  bindSelectableCardChecks(app);
 
   document.getElementById("backDashboardBtn").onclick = () => showDashboardView({ onLock });
 

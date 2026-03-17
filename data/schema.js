@@ -19,6 +19,7 @@ export function createEmptyAppData() {
     settings: {
       therapistName: "",
       therapistFax: "",
+      practicePhone: "",
       practiceAddress: PRACTICE_ADDRESS,
       privacyMode: "full",
       createdAt: now,

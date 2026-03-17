@@ -67,6 +67,7 @@ export function buildBackupMeta(runtimeData) {
     exportTimestamp: new Date().toISOString(),
     therapistName: normalized.settings?.therapistName || "",
     therapistFax: normalized.settings?.therapistFax || "",
+    practicePhone: normalized.settings?.practicePhone || "",
     counts
   };
 }
