@@ -2098,13 +2098,13 @@ export function showNachbestellungView({ onLock, doctorFilter = "", textFilter =
                       </div>
 
                       ${patient.rows.map((row) => `
-                        <label class="selection-card ${selected.has(row.rowId) ? "is-selected" : ""}" data-row-id="${row.rowId}">
+                        <div class="compact-card selectable-card ${selected.has(row.rowId) ? "is-selected" : ""}" data-row-id="${row.rowId}">
                           <input class="nachbestellCheck" type="checkbox" data-row-id="${row.rowId}" style="width:auto;" ${selected.has(row.rowId) ? "checked" : ""}>
                           <span>
                             <strong>${escapeHtml(row.text || "—")}</strong><br>
                             <span class="muted">Status: ${escapeHtml(row.status || "—")}</span>
                           </span>
-                        </label>
+                        </div>
                       `).join("")}
                     </div>
                   </details>
@@ -2168,15 +2168,7 @@ export function showNachbestellungView({ onLock, doctorFilter = "", textFilter =
     });
   };
 
-  document.querySelectorAll(".nachbestellCheck").forEach((checkbox) => {
-    checkbox.addEventListener("change", () => {
-      const card = checkbox.closest(".selection-card");
-      if (card) {
-        card.classList.toggle("is-selected", checkbox.checked);
-      }
-    });
-  });
-
+  bindSelectableCardChecks(app);
 
   document.getElementById("saveNachbestellSelectionBtn").onclick = async () => {
     const msg = document.getElementById("nachbestellMsg");
