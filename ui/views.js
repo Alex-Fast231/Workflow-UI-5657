@@ -2098,8 +2098,8 @@ export function showNachbestellungView({ onLock, doctorFilter = "", textFilter =
                       </div>
 
                       ${patient.rows.map((row) => `
-                        <div class="compact-card selectable-card ${selected.has(row.rowId) ? "is-selected" : ""}">
-                          <label style="display:flex; gap:10px; align-items:flex-start; font-weight:normal; width:100%; cursor:pointer;">
+                        <div class="compact-card">
+                          <label style="display:flex; gap:10px; align-items:flex-start; font-weight:normal;">
                             <input class="nachbestellCheck" type="checkbox" data-row-id="${row.rowId}" style="width:auto;" ${selected.has(row.rowId) ? "checked" : ""}>
                             <span>
                               <strong>${escapeHtml(row.text || "—")}</strong><br>
@@ -2169,8 +2169,6 @@ export function showNachbestellungView({ onLock, doctorFilter = "", textFilter =
       selectedIds: []
     });
   };
-
-  bindSelectableCardChecks(app);
 
   document.getElementById("saveNachbestellSelectionBtn").onclick = async () => {
     const msg = document.getElementById("nachbestellMsg");
