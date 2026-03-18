@@ -2098,15 +2098,13 @@ export function showNachbestellungView({ onLock, doctorFilter = "", textFilter =
                       </div>
 
                       ${patient.rows.map((row) => `
-                        <div class="compact-card">
-                          <label style="display:flex; gap:10px; align-items:flex-start; font-weight:normal;">
-                            <input class="nachbestellCheck" type="checkbox" data-row-id="${row.rowId}" style="width:auto;" ${selected.has(row.rowId) ? "checked" : ""}>
-                            <span>
-                              <strong>${escapeHtml(row.text || "—")}</strong><br>
-                              <span class="muted">Status: ${escapeHtml(row.status || "—")}</span>
-                            </span>
-                          </label>
-                        </div>
+                        <label class="selection-card ${selected.has(row.rowId) ? "is-selected" : ""}" data-row-id="${row.rowId}">
+                          <input class="nachbestellCheck" type="checkbox" data-row-id="${row.rowId}" style="width:auto;" ${selected.has(row.rowId) ? "checked" : ""}>
+                          <span>
+                            <strong>${escapeHtml(row.text || "—")}</strong><br>
+                            <span class="muted">Status: ${escapeHtml(row.status || "—")}</span>
+                          </span>
+                        </label>
                       `).join("")}
                     </div>
                   </details>
@@ -2169,6 +2167,16 @@ export function showNachbestellungView({ onLock, doctorFilter = "", textFilter =
       selectedIds: []
     });
   };
+
+  document.querySelectorAll(".nachbestellCheck").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const card = checkbox.closest(".selection-card");
+      if (card) {
+        card.classList.toggle("is-selected", checkbox.checked);
+      }
+    });
+  });
+
 
   document.getElementById("saveNachbestellSelectionBtn").onclick = async () => {
     const msg = document.getElementById("nachbestellMsg");
