@@ -39,6 +39,7 @@ import {
   buildAbgabeTree,
   buildNachbestellTree,
   createRezeptTimeEntry,
+  deleteRezeptTimeEntry,
   getRezeptTimeEntries,
   getRezeptTimeSummary,
   getPendingKilometerContext,
@@ -1704,6 +1705,9 @@ export function showRezeptDetailView({ onLock, homeId, patientId, rezeptId }) {
             <p class="muted">Typ: ${escapeHtml(getTimeTypeLabel(item.type))}</p>
             <p class="muted">Status: ${item.confirmed ? "Bestätigt" : "Offen"}</p>
             ${item.note ? `<p>${escapeHtml(item.note)}</p>` : ""}
+            <div class="row" style="margin-top:10px;">
+              <button class="deleteTimeEntryBtn secondary" data-time-entry-id="${item.timeEntryId}">Zeiteintrag löschen</button>
+            </div>
           </div>
         `).join("")}
       </div>

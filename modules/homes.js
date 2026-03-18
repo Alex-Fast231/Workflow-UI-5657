@@ -960,6 +960,42 @@ export function createRezeptTimeEntry(homeId, patientId, rezeptId, payload) {
   });
 }
 
+
+
+export function deleteRezeptTimeEntry(homeId, patientId, rezeptId, timeEntryId) {
+  mutateRuntimeData((data) => {
+    const home = getHomeById(data, homeId);
+    if (!home) throw new Error("Heim nicht gefunden");
+
+    const patient = getPatientById(home, patientId);
+    if (!patient) throw new Error("Patient nicht gefunden");
+
+    const rezept = getRezeptById(patient, rezeptId);
+    if (!rezept) throw new Error("Rezept nicht gefunden");
+
+    ensureRezeptTimeState(rezept);
+
+    const beforeLength = rezept.timeEntries.length;
+    rezept.timeEntries = rezept.timeEntries.filter((item) => item.timeEntryId !== timeEntryId);
+
+    if (rezept.timeEntries.length === beforeLength) {
+      throw new Error("Zeiteintrag nicht gefunden");
+    }
+
+    (rezept.entries || []).forEach((entry) => {
+      if (entry.linkedTimeEntryId === timeEntryId) {
+        entry.linkedTimeEntryId = "";
+      }
+    });
+
+    const lastTimeEntry = rezept.timeEntries
+      .slice()
+      .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))[0];
+
+    rezept.zeitMeta.lastTimeEntryAt = lastTimeEntry?.createdAt || "";
+  });
+}
+
 export function getRezeptTimeEntries(rezept) {
   return [...(rezept?.timeEntries || [])].sort((a, b) => {
     const ad = String(a?.date || "");
