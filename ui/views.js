@@ -1776,6 +1776,22 @@ ${pendingKm.fromLabel} → ${pendingKm.toLabel}`, "");
       });
     };
   });
+
+  document.querySelectorAll(".deleteTimeEntryBtn").forEach((btn) => {
+    btn.onclick = async () => {
+      const ok = window.confirm("Zeiteintrag wirklich löschen?");
+      if (!ok) return;
+
+      try {
+        deleteRezeptTimeEntry(homeId, patientId, rezeptId, btn.dataset.timeEntryId);
+        await queuePersistRuntimeData();
+        showRezeptDetailView({ onLock, homeId, patientId, rezeptId });
+      } catch (err) {
+        console.error(err);
+        alert(err?.message || "Zeiteintrag konnte nicht gelöscht werden.");
+      }
+    };
+  });
 }
 
 export function showEditRezeptEntryView({ onLock, homeId, patientId, rezeptId, entryId }) {
