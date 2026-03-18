@@ -2098,12 +2098,14 @@ export function showNachbestellungView({ onLock, doctorFilter = "", textFilter =
                       </div>
 
                       ${patient.rows.map((row) => `
-                        <div class="compact-card selectable-card ${selected.has(row.rowId) ? "is-selected" : ""}" data-row-id="${row.rowId}">
-                          <input class="nachbestellCheck" type="checkbox" data-row-id="${row.rowId}" style="width:auto;" ${selected.has(row.rowId) ? "checked" : ""}>
-                          <span>
-                            <strong>${escapeHtml(row.text || "—")}</strong><br>
-                            <span class="muted">Status: ${escapeHtml(row.status || "—")}</span>
-                          </span>
+                        <div class="compact-card selectable-card ${selected.has(row.rowId) ? "is-selected" : ""}">
+                          <label style="display:flex; gap:10px; align-items:flex-start; font-weight:normal; width:100%; cursor:pointer;">
+                            <input class="nachbestellCheck" type="checkbox" data-row-id="${row.rowId}" style="width:auto;" ${selected.has(row.rowId) ? "checked" : ""}>
+                            <span>
+                              <strong>${escapeHtml(row.text || "—")}</strong><br>
+                              <span class="muted">Status: ${escapeHtml(row.status || "—")}</span>
+                            </span>
+                          </label>
                         </div>
                       `).join("")}
                     </div>
