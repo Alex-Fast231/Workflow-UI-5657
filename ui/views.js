@@ -48,6 +48,7 @@ import {
   getKilometerOverview,
   getKilometerPointOptions,
   addManualKilometerTravel,
+  deleteKilometerTravel,
   getKilometerPeriodSummary
 } from "../modules/homes.js";
 import { getRezeptFristInfo } from "../modules/fristen.js";
@@ -2243,7 +2244,12 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "" }) 
       <button id="backDashboardBtn" class="secondary">Zurück zum Dashboard</button>
     </div>
 
-    <div class="card">
+    <details class="accordion">
+      <summary>
+        <span>Manuelle Fahrt ergänzen</span>
+        <span class="muted">Ausnahmefälle</span>
+      </summary>
+      <div class="accordion-body">
       <h3>Manuelle Fahrt ergänzen</h3>
       <p class="muted">Für Ausnahmefälle wie zusätzliche Wechsel zwischen Einrichtungen. Begründung ist Pflicht.</p>
 
@@ -2270,9 +2276,10 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "" }) 
 
       <button id="saveManualKmBtn">Manuelle Fahrt speichern</button>
       <div id="manualKmMsg"></div>
-    </div>
+      </div>
+    </details>
 
-    <details class="accordion" open>
+    <details class="accordion">
       <summary>
         <span>Fahrtenprotokoll</span>
         <span class="muted">${travelLog.length}</span>
@@ -2285,6 +2292,9 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "" }) 
             <div class="compact-meta">${escapeHtml(item.fromLabel || "—")} → ${escapeHtml(item.toLabel || "—")}</div>
             <div class="compact-meta">Typ: ${item.source === "auto" ? "Automatisch" : "Manuell"}</div>
             ${item.note ? `<div class="compact-meta">${escapeHtml(item.note)}</div>` : ""}
+            <div class="row" style="margin-top:10px;">
+              <button class="secondary deleteTravelBtn" data-travel-id="${escapeHtml(item.travelId || "")}">Fahrt löschen</button>
+            </div>
           </div>
         `).join("")}
       </div>
@@ -2420,6 +2430,22 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "" }) 
       msg.textContent = err?.message || "Manuelle Fahrt konnte nicht gespeichert werden.";
     }
   };
+
+  document.querySelectorAll(".deleteTravelBtn").forEach((btn) => {
+    btn.onclick = async () => {
+      const ok = window.confirm("Diese Fahrt wirklich löschen?");
+      if (!ok) return;
+
+      try {
+        deleteKilometerTravel(btn.dataset.travelId);
+        await queuePersistRuntimeData();
+        showKilometerView({ onLock, summaryFrom, summaryTo });
+      } catch (err) {
+        console.error(err);
+        alert(err?.message || "Fahrt konnte nicht gelöscht werden.");
+      }
+    };
+  });
 }
 
 export function performLock({ onLocked }) {

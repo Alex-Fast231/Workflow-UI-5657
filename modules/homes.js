@@ -405,6 +405,21 @@ export function addManualKilometerTravel(payload) {
   });
 }
 
+export function deleteKilometerTravel(travelId) {
+  mutateRuntimeData((data) => {
+    const kilometerState = ensureKilometerState(data);
+    const id = String(travelId || '').trim();
+    if (!id) throw new Error('Fahrt nicht gefunden.');
+
+    const before = kilometerState.travelLog.length;
+    kilometerState.travelLog = kilometerState.travelLog.filter((item) => item.travelId !== id);
+
+    if (kilometerState.travelLog.length === before) {
+      throw new Error('Fahrt nicht gefunden.');
+    }
+  });
+}
+
 function parseDeDateToComparable(value) {
   const s = String(value || '').trim();
   const m = s.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
