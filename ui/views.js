@@ -211,22 +211,33 @@ function getTimePeriodSummary(data, fromDate, toDate) {
   };
 }
 
-function getPatientTimeOverview(data) {
+function getDashboardTodayPatients(data, targetDate = formatCurrentDateShort()) {
+  const normalizedDate = String(targetDate || '').trim();
   const rows = [];
   (data?.homes || []).forEach((home) => {
     (home?.patients || []).forEach((patient) => {
-      let total = 0;
+      let hasDocumentationForDate = false;
+      let totalMinutesForDate = 0;
+
       (patient?.rezepte || []).forEach((rezept) => {
+        (rezept?.entries || []).forEach((entry) => {
+          if (String(entry?.date || '').trim() === normalizedDate) {
+            hasDocumentationForDate = true;
+          }
+        });
+
         (rezept?.timeEntries || []).forEach((entry) => {
+          if (String(entry?.date || '').trim() !== normalizedDate) return;
           const minutes = Number(entry?.minutes || 0);
-          if (Number.isFinite(minutes)) total += minutes;
+          if (Number.isFinite(minutes)) totalMinutesForDate += minutes;
         });
       });
-      if (total > 0) {
+
+      if (hasDocumentationForDate) {
         rows.push({
           patientName: `${patient?.lastName || ""}, ${patient?.firstName || ""}`.replace(/^,\s*/, "").trim() || 'Ohne Namen',
           homeName: home?.name || '',
-          totalMinutes: total
+          totalMinutes: totalMinutesForDate
         });
       }
     });
@@ -987,6 +998,7 @@ export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo 
   const totalTrackedMinutes = getTotalTrackedMinutes(runtimeData, todayDate);
   const timePeriodSummary = getTimePeriodSummary(runtimeData, timeSummaryFrom, timeSummaryTo);
   const hasTimeSummaryFilter = Boolean(String(timeSummaryFrom || '').trim() || String(timeSummaryTo || '').trim());
+  const dashboardTodayPatients = getDashboardTodayPatients(runtimeData, todayDate);
 
   render(`
     ${renderDashboardHeaderCard({ therapistName })}
@@ -1033,10 +1045,10 @@ export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo 
           </div>
         </div>
         <div style="margin-top:10px;" class="list-stack">
-          ${getPatientTimeOverview(runtimeData).length === 0 ? `<p class="muted">Noch keine Zeiten erfasst.</p>` : getPatientTimeOverview(runtimeData).map((row) => `
+          ${dashboardTodayPatients.length === 0 ? `<p class="muted">Heute noch keine Patienten dokumentiert.</p>` : dashboardTodayPatients.map((row) => `
             <div class="compact-card" style="margin:0; padding:10px;">
               <div style="font-weight:600;">${escapeHtml(row.patientName)}</div>
-              <div class="compact-meta">${escapeHtml(row.homeName || '—')}<br>${escapeHtml(formatMinutesLabel(row.totalMinutes))}</div>
+              <div class="compact-meta">${escapeHtml(row.homeName || '—')}${row.totalMinutes > 0 ? `<br>${escapeHtml(formatMinutesLabel(row.totalMinutes))}` : ''}</div>
             </div>
           `).join("")}
         </div>
