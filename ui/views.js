@@ -232,10 +232,33 @@ function bindSelectableCardChecks(root = document) {
 
     sync();
 
-    if (input.dataset.boundCard === '1') return;
-    input.dataset.boundCard = '1';
-    input.addEventListener('change', sync);
+    if (input.dataset.boundCard !== '1') {
+      input.dataset.boundCard = '1';
+      input.addEventListener('change', sync);
+    }
+
+    if (card.dataset.boundSelectableCard === '1') return;
+    card.dataset.boundSelectableCard = '1';
+
+    card.addEventListener('click', (event) => {
+      if (event.target.closest('input, button, a, select, textarea, summary')) return;
+      if (event.target.closest('label')) return;
+      event.preventDefault();
+      input.checked = !input.checked;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
   });
+}
+
+function getCheckedRowIds(selector, root = document) {
+  return Array.from(root.querySelectorAll(`${selector}:checked`))
+    .map((element) => String(element.dataset.rowId || '').trim())
+    .filter(Boolean);
+}
+
+function normalizeSelectedRowIds(selectedIds = [], rows = []) {
+  const allowedIds = new Set((rows || []).map((row) => row.rowId));
+  return Array.from(new Set((selectedIds || []).filter((id) => allowedIds.has(id))));
 }
 
 
@@ -2036,14 +2059,16 @@ export function showAbgabeView({ onLock, searchText = "", selectedIds = [] }) {
 
 export function showNachbestellungView({ onLock, doctorFilter = "", textFilter = "", selectedIds = [] }) {
   bindLockButton(onLock);
-  setCurrentView("nachbestellung", { doctorFilter, textFilter, selectedIds });
 
   const data = getRuntimeData();
   const doctors = getDoctorList(data);
   const allRows = buildNachbestellRows(data);
   const filteredRows = filterNachbestellRows(allRows, doctorFilter, textFilter);
+  const normalizedSelectedIds = normalizeSelectedRowIds(selectedIds, filteredRows);
   const tree = buildNachbestellTree(data, doctorFilter, textFilter);
-  const selected = new Set(selectedIds);
+  const selected = new Set(normalizedSelectedIds);
+
+  setCurrentView("nachbestellung", { doctorFilter, textFilter, selectedIds: normalizedSelectedIds });
 
   render(`
     <div class="card">
@@ -2098,8 +2123,8 @@ export function showNachbestellungView({ onLock, doctorFilter = "", textFilter =
                       </div>
 
                       ${patient.rows.map((row) => `
-                        <div class="compact-card">
-                          <label style="display:flex; gap:10px; align-items:flex-start; font-weight:normal;">
+                        <div class="compact-card selectable-card ${selected.has(row.rowId) ? "is-selected" : ""}">
+                          <label style="display:flex; gap:10px; align-items:flex-start; font-weight:normal; width:100%; cursor:pointer;">
                             <input class="nachbestellCheck" type="checkbox" data-row-id="${row.rowId}" style="width:auto;" ${selected.has(row.rowId) ? "checked" : ""}>
                             <span>
                               <strong>${escapeHtml(row.text || "—")}</strong><br>
@@ -2151,7 +2176,7 @@ export function showNachbestellungView({ onLock, doctorFilter = "", textFilter =
   document.getElementById("runDoctorFilterBtn").onclick = () => {
     const doctorValue = document.getElementById("doctorFilter").value;
     const textValue = document.getElementById("nachbestellTextFilter").value;
-    const nextSelected = Array.from(document.querySelectorAll(".nachbestellCheck:checked")).map((el) => el.dataset.rowId);
+    const nextSelected = getCheckedRowIds(".nachbestellCheck", app);
 
     showNachbestellungView({
       onLock,
@@ -2170,12 +2195,23 @@ export function showNachbestellungView({ onLock, doctorFilter = "", textFilter =
     });
   };
 
+  bindSelectableCardChecks(app);
+
+  document.querySelectorAll('.nachbestellCheck').forEach((check) => {
+    if (check.dataset.boundSelectionState === '1') return;
+    check.dataset.boundSelectionState = '1';
+    check.addEventListener('change', () => {
+      const nextSelected = getCheckedRowIds('.nachbestellCheck', app);
+      setCurrentView('nachbestellung', { doctorFilter, textFilter, selectedIds: nextSelected });
+    });
+  });
+
   document.getElementById("saveNachbestellSelectionBtn").onclick = async () => {
     const msg = document.getElementById("nachbestellMsg");
     msg.className = "error";
     msg.textContent = "";
 
-    const chosenIds = Array.from(document.querySelectorAll(".nachbestellCheck:checked")).map((el) => el.dataset.rowId);
+    const chosenIds = getCheckedRowIds(".nachbestellCheck", app);
     const chosenRows = filteredRows.filter((row) => chosenIds.includes(row.rowId));
 
     if (chosenRows.length === 0) {
@@ -2203,7 +2239,7 @@ export function showNachbestellungView({ onLock, doctorFilter = "", textFilter =
   };
 
   document.getElementById("printNachbestellSelectionBtn").onclick = () => {
-    const chosenIds = Array.from(document.querySelectorAll(".nachbestellCheck:checked")).map((el) => el.dataset.rowId);
+    const chosenIds = getCheckedRowIds(".nachbestellCheck", app);
     const chosenRows = filteredRows.filter((row) => chosenIds.includes(row.rowId));
 
     if (chosenRows.length === 0) {
