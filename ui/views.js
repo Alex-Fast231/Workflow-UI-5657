@@ -2199,14 +2199,18 @@ export function showAbgabeView({ onLock, searchText = "", selectedIds = [] }) {
       return;
     }
 
-    const therapistName = String(data?.settings?.therapistName || "").trim();
-    const createdAtLabel = new Date().toLocaleString("de-DE");
+    const therapistName = String(data?.settings?.therapistName || "").trim() || "—";
+    const createdAtLabel = new Date().toLocaleDateString("de-DE", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    });
 
     printHtml(
       "Abgabeliste",
       `
-        <div class="row" style="margin-bottom:14px;">
-          ${therapistName ? `<div><strong>Therapeut:</strong> ${escapeHtml(therapistName)}</div>` : ""}
+        <div style="border-bottom:1px solid #d1d5db; padding:0 0 12px 0; margin-bottom:14px;">
+          <div><strong>Therapeut:</strong> ${escapeHtml(therapistName)}</div>
           <div><strong>Erstellt am:</strong> ${escapeHtml(createdAtLabel)}</div>
         </div>
         ${chosenRows.map((row) => `
