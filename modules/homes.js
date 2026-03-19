@@ -724,7 +724,9 @@ export function buildAbgabeRows(data) {
           rows.push({
             rowId: `${home.homeId}_${patient.patientId}_${rezept.rezeptId}_${item.itemId}`,
             heim: home.name || "",
-            patient: `${patient.firstName || ""} ${patient.lastName || ""}`.trim(),
+            patient: `${patient.lastName || ""}, ${patient.firstName || ""}`.replace(/^,\s*/, "").trim(),
+            patientFirstName: patient.firstName || "",
+            patientLastName: patient.lastName || "",
             geb: patient.birthDate || "",
             ausstell: rezept.ausstell || "",
             leistung: item.type || "",
@@ -732,6 +734,9 @@ export function buildAbgabeRows(data) {
             menge: item.count || "",
             status: rezept.status || "",
             arzt: rezept.arzt || "",
+            befreit: !!patient.befreit,
+            bg: !!rezept.bg,
+            dt: !!rezept.dt,
             rezeptId: rezept.rezeptId,
             patientId: patient.patientId,
             homeId: home.homeId
@@ -741,7 +746,15 @@ export function buildAbgabeRows(data) {
     });
   });
 
-  return rows;
+  return rows.sort((a, b) => {
+    const last = String(a.patientLastName || "").localeCompare(String(b.patientLastName || ""), "de");
+    if (last !== 0) return last;
+    const first = String(a.patientFirstName || "").localeCompare(String(b.patientFirstName || ""), "de");
+    if (first !== 0) return first;
+    const homeCompare = String(a.heim || "").localeCompare(String(b.heim || ""), "de");
+    if (homeCompare !== 0) return homeCompare;
+    return String(a.leistung || "").localeCompare(String(b.leistung || ""), "de");
+  });
 }
 
 export function filterAbgabeRows(rows, query) {
@@ -956,11 +969,17 @@ export function saveAbgabeHistory(title, rows) {
       rows: rows.map((row) => ({
         heim: row.heim || "",
         patient: row.patient || "",
+        patientFirstName: row.patientFirstName || "",
+        patientLastName: row.patientLastName || "",
         geb: row.geb || "",
         ausstell: row.ausstell || "",
         leistung: row.leistung || "",
         anzahl: row.anzahl || "",
-        menge: row.menge || ""
+        menge: row.menge || "",
+        arzt: row.arzt || "",
+        befreit: !!row.befreit,
+        bg: !!row.bg,
+        dt: !!row.dt
       }))
     });
   });
@@ -1012,8 +1031,11 @@ export function buildAbgabeTree(data) {
       if (rezepte.length > 0) {
         patients.push({
           patientId: patient.patientId,
-          patientName: `${patient.firstName || ""} ${patient.lastName || ""}`.trim(),
+          patientName: `${patient.lastName || ""}, ${patient.firstName || ""}`.replace(/^,\s*/, "").trim(),
+          patientFirstName: patient.firstName || "",
+          patientLastName: patient.lastName || "",
           geb: patient.birthDate || "",
+          befreit: !!patient.befreit,
           rezepte
         });
       }
@@ -1023,7 +1045,11 @@ export function buildAbgabeTree(data) {
       homes.push({
         homeId: home.homeId,
         homeName: home.name || "",
-        patients: patients.sort((a, b) => String(a.patientName).localeCompare(String(b.patientName), "de"))
+        patients: patients.sort((a, b) => {
+          const last = String(a.patientLastName || "").localeCompare(String(b.patientLastName || ""), "de");
+          if (last !== 0) return last;
+          return String(a.patientFirstName || "").localeCompare(String(b.patientFirstName || ""), "de");
+        })
       });
     }
   });

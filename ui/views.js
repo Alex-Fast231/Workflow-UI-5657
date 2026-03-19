@@ -2018,6 +2018,26 @@ export function showEditRezeptEntryView({ onLock, homeId, patientId, rezeptId, e
   };
 }
 
+function formatAbgabeZusatz(row) {
+  const extras = [];
+  if (row?.befreit) extras.push("Befreit");
+  if (row?.dt) extras.push("Doppelstunde");
+  if (row?.bg) extras.push("BG");
+  return extras.join(", ");
+}
+
+function sortAbgabeRowsForOutput(rows) {
+  return [...(rows || [])].sort((a, b) => {
+    const last = String(a.patientLastName || "").localeCompare(String(b.patientLastName || ""), "de");
+    if (last !== 0) return last;
+    const first = String(a.patientFirstName || "").localeCompare(String(b.patientFirstName || ""), "de");
+    if (first !== 0) return first;
+    const homeCompare = String(a.heim || "").localeCompare(String(b.heim || ""), "de");
+    if (homeCompare !== 0) return homeCompare;
+    return String(a.leistung || "").localeCompare(String(b.leistung || ""), "de");
+  });
+}
+
 export function showAbgabeView({ onLock, searchText = "", selectedIds = [] }) {
   bindLockButton(onLock);
   setCurrentView("abgabe", { searchText, selectedIds });
@@ -2041,7 +2061,7 @@ export function showAbgabeView({ onLock, searchText = "", selectedIds = [] }) {
         <span class="muted">Filter</span>
       </summary>
       <div class="accordion-body">
-        <input id="abgabeSearch" type="text" value="${escapeHtml(searchText)}" placeholder="Patient, Heim, Leistung, Arzt, Status">
+        <input id="abgabeSearch" type="text" value="${escapeHtml(searchText)}" placeholder="Patient, Heim, Leistung, Arzt">
         <div class="row">
           <button id="runAbgabeSearchBtn" class="secondary">Suchen</button>
           <button id="clearAbgabeSearchBtn" class="secondary">Suche löschen</button>
@@ -2078,7 +2098,7 @@ export function showAbgabeView({ onLock, searchText = "", selectedIds = [] }) {
                             <strong>${escapeHtml(row.leistung || "—")} ${escapeHtml(row.anzahl || "")}</strong><br>
                             <span class="muted">Arzt: ${escapeHtml(row.arzt || "—")}</span><br>
                             <span class="muted">Ausstellung: ${escapeHtml(row.ausstell || "—")}</span><br>
-                            <span class="muted">Status: ${escapeHtml(row.status || "—")}</span>
+                            ${formatAbgabeZusatz(row) ? `<span class="muted">${escapeHtml(formatAbgabeZusatz(row))}</span>` : ""}
                           </span>
                         </label>
                       </div>
@@ -2153,7 +2173,7 @@ export function showAbgabeView({ onLock, searchText = "", selectedIds = [] }) {
     msg.textContent = "";
 
     const chosenIds = Array.from(document.querySelectorAll(".abgabeCheck:checked")).map((el) => el.dataset.rowId);
-    const chosenRows = allRows.filter((row) => chosenIds.includes(row.rowId));
+    const chosenRows = sortAbgabeRowsForOutput(allRows.filter((row) => chosenIds.includes(row.rowId)));
 
     if (chosenRows.length === 0) {
       msg.textContent = "Bitte mindestens einen Eintrag auswählen.";
@@ -2172,7 +2192,7 @@ export function showAbgabeView({ onLock, searchText = "", selectedIds = [] }) {
 
   document.getElementById("printAbgabeSelectionBtn").onclick = () => {
     const chosenIds = Array.from(document.querySelectorAll(".abgabeCheck:checked")).map((el) => el.dataset.rowId);
-    const chosenRows = allRows.filter((row) => chosenIds.includes(row.rowId));
+    const chosenRows = sortAbgabeRowsForOutput(allRows.filter((row) => chosenIds.includes(row.rowId)));
 
     if (chosenRows.length === 0) {
       alert("Bitte mindestens einen Eintrag auswählen.");
@@ -2187,7 +2207,7 @@ export function showAbgabeView({ onLock, searchText = "", selectedIds = [] }) {
           <span class="muted">Arzt: ${escapeHtml(row.arzt || "—")}</span><br>
           <span class="muted">Ausstellung: ${escapeHtml(row.ausstell || "—")}</span><br>
           <span class="muted">Leistung: ${escapeHtml(row.leistung || "—")} ${escapeHtml(row.anzahl || "")}</span><br>
-          <span class="muted">Status: ${escapeHtml(row.status || "—")}</span>
+          ${formatAbgabeZusatz(row) ? `<span class="muted">${escapeHtml(formatAbgabeZusatz(row))}</span>` : ""}
         </div>
       `).join("")
     );
@@ -2265,7 +2285,7 @@ export function showNachbestellungView({ onLock, doctorFilter = "", textFilter =
                             <input class="nachbestellCheck" type="checkbox" data-row-id="${row.rowId}" style="width:auto;" ${selected.has(row.rowId) ? "checked" : ""}>
                             <span>
                               <strong>${escapeHtml(row.text || "—")}</strong><br>
-                              <span class="muted">Status: ${escapeHtml(row.status || "—")}</span>
+                              ${formatAbgabeZusatz(row) ? `<span class="muted">${escapeHtml(formatAbgabeZusatz(row))}</span>` : ""}
                             </span>
                           </label>
                         </div>
