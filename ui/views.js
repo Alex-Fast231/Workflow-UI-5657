@@ -1,13 +1,15 @@
 import { createEmptyAppData } from "../data/schema.js";
-import { setupSecurity, unlockWithPIN } from "../security/auth.js";
+import { setupSecurity, unlockWithPIN, updateSecurityCredentials } from "../security/auth.js";
 import { getRemainingLockoutMs } from "../security/lock.js";
 import {
   getCryptoMeta,
   getSecurityState,
   setRuntimeSession,
+  setCryptoMeta,
   setSecurityState,
   clearRuntimeSession,
   getRuntimeData,
+  getRuntimeKey,
   setCurrentView,
   getCurrentView,
   getCurrentContext
@@ -739,6 +741,148 @@ export function showLoginView({ onSuccess }) {
   };
 }
 
+function renderDashboardHeaderCard({ therapistName }) {
+  return `
+    <div class="card">
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px;">
+        <div>
+          <h2 style="margin-bottom:6px;">Dashboard</h2>
+          <p class="muted">${escapeHtml(formatCurrentDateLong())}</p>
+          <p>Willkommen, ${escapeHtml(therapistName)}.</p>
+        </div>
+        <button id="openSettingsBtn" class="secondary" title="Einstellungen bearbeiten" aria-label="Einstellungen bearbeiten" style="width:auto; margin-top:0; padding:10px 12px; min-width:48px; font-size:20px; line-height:1;">⚙️</button>
+      </div>
+    </div>
+  `;
+}
+
+export function showSettingsView({ onLock }) {
+  bindLockButton(onLock);
+  setCurrentView("settings");
+
+  const runtimeData = getRuntimeData();
+  const settings = runtimeData?.settings || {};
+
+  render(`
+    <div class="card">
+      <h2>Einstellungen</h2>
+      <p class="muted">Hier können die Angaben aus der Ersteinrichtung bearbeitet werden.</p>
+      <button id="backDashboardFromSettingsBtn" class="secondary">Zurück zum Dashboard</button>
+    </div>
+
+    <div class="card">
+      <label for="settingsTherapistName">Therapeutenname</label>
+      <input id="settingsTherapistName" type="text" autocomplete="off" value="${escapeHtml(settings.therapistName || "")}">
+
+      <label for="settingsPracticeAddress">Praxisadresse</label>
+      <textarea id="settingsPracticeAddress" rows="3" autocomplete="off">${escapeHtml(settings.practiceAddress || "")}</textarea>
+
+      <label for="settingsPracticePhone">Telefon</label>
+      <input id="settingsPracticePhone" type="tel" inputmode="numeric" autocomplete="off" value="${escapeHtml(settings.practicePhone || "")}">
+
+      <label for="settingsTherapistFax">Faxnummer</label>
+      <input id="settingsTherapistFax" type="tel" inputmode="numeric" autocomplete="off" value="${escapeHtml(settings.therapistFax || "")}">
+
+      <label for="settingsPracticePassword">Neues Praxispasswort</label>
+      <input id="settingsPracticePassword" type="password" autocomplete="new-password" placeholder="leer lassen = unverändert">
+
+      <label for="settingsPracticePasswordRepeat">Neues Praxispasswort wiederholen</label>
+      <input id="settingsPracticePasswordRepeat" type="password" autocomplete="new-password" placeholder="leer lassen = unverändert">
+
+      <label for="settingsWorkflowPin">Neue Workflow-PIN</label>
+      <input id="settingsWorkflowPin" type="password" inputmode="numeric" autocomplete="new-password" placeholder="leer lassen = unverändert">
+
+      <label for="settingsWorkflowPinRepeat">Neue Workflow-PIN wiederholen</label>
+      <input id="settingsWorkflowPinRepeat" type="password" inputmode="numeric" autocomplete="new-password" placeholder="leer lassen = unverändert">
+
+      <button id="saveSettingsBtn">Änderungen speichern</button>
+      <div id="settingsMessage"></div>
+    </div>
+  `);
+
+  document.getElementById("backDashboardFromSettingsBtn").onclick = () => {
+    showDashboardView({ onLock });
+  };
+
+  document.getElementById("saveSettingsBtn").onclick = async () => {
+    const therapistName = document.getElementById("settingsTherapistName").value.trim();
+    const practiceAddress = document.getElementById("settingsPracticeAddress").value.trim();
+    const practicePhone = document.getElementById("settingsPracticePhone").value.trim();
+    const therapistFax = document.getElementById("settingsTherapistFax").value.trim();
+    const newPassword = document.getElementById("settingsPracticePassword").value;
+    const newPasswordRepeat = document.getElementById("settingsPracticePasswordRepeat").value;
+    const newPin = document.getElementById("settingsWorkflowPin").value;
+    const newPinRepeat = document.getElementById("settingsWorkflowPinRepeat").value;
+    const msg = document.getElementById("settingsMessage");
+
+    msg.className = "error";
+    msg.textContent = "";
+
+    if ((newPassword || newPasswordRepeat) && newPassword !== newPasswordRepeat) {
+      msg.textContent = "Das neue Praxispasswort stimmt nicht überein.";
+      return;
+    }
+
+    if (newPassword && newPassword.length < 8) {
+      msg.textContent = "Das Praxispasswort muss mindestens 8 Zeichen haben.";
+      return;
+    }
+
+    if ((newPin || newPinRepeat) && newPin !== newPinRepeat) {
+      msg.textContent = "Die neue Workflow-PIN stimmt nicht überein.";
+      return;
+    }
+
+    if (newPin && newPin.length < 6) {
+      msg.textContent = "Die Workflow-PIN muss mindestens 6 Zeichen haben.";
+      return;
+    }
+
+    try {
+      mutateRuntimeData((data) => {
+        data.settings.therapistName = therapistName;
+        data.settings.practiceAddress = practiceAddress;
+        data.settings.practicePhone = practicePhone;
+        data.settings.therapistFax = therapistFax;
+        data.settings.updatedAt = new Date().toISOString();
+      });
+
+      if (newPassword || newPin) {
+        const nextPassword = newPassword || window.prompt("Bitte aktuelles Praxispasswort erneut eingeben, damit es unverändert übernommen wird:", "") || "";
+        const nextPin = newPin || window.prompt("Bitte aktuelle Workflow-PIN erneut eingeben, damit sie unverändert übernommen wird:", "") || "";
+
+        if (!nextPassword || nextPassword.length < 8) {
+          throw new Error("Für die Speicherung wird ein gültiges Praxispasswort benötigt.");
+        }
+
+        if (!nextPin || nextPin.length < 6) {
+          throw new Error("Für die Speicherung wird eine gültige Workflow-PIN benötigt.");
+        }
+
+        const nextCryptoMeta = await updateSecurityCredentials({
+          runtimeKey: getRuntimeKey(),
+          currentCryptoMeta: getCryptoMeta(),
+          password: nextPassword,
+          pin: nextPin
+        });
+        setCryptoMeta(nextCryptoMeta);
+      }
+
+      await queuePersistRuntimeData();
+      msg.className = "success";
+      msg.textContent = "Einstellungen gespeichert.";
+      document.getElementById("settingsPracticePassword").value = "";
+      document.getElementById("settingsPracticePasswordRepeat").value = "";
+      document.getElementById("settingsWorkflowPin").value = "";
+      document.getElementById("settingsWorkflowPinRepeat").value = "";
+    } catch (err) {
+      console.error(err);
+      msg.className = "error";
+      msg.textContent = err?.message || "Einstellungen konnten nicht gespeichert werden.";
+    }
+  };
+}
+
 export function showDashboardView({ onLock }) {
   bindLockButton(onLock);
   setCurrentView("dashboard");
@@ -750,11 +894,7 @@ export function showDashboardView({ onLock }) {
   const totalTrackedMinutes = getTotalTrackedMinutes(runtimeData);
 
   render(`
-    <div class="card">
-      <h2>Dashboard</h2>
-      <p class="muted">${escapeHtml(formatCurrentDateLong())}</p>
-      <p>Willkommen, ${escapeHtml(therapistName)}.</p>
-    </div>
+    ${renderDashboardHeaderCard({ therapistName })}
 
     <details class="accordion">
       <summary>
@@ -849,6 +989,7 @@ export function showDashboardView({ onLock }) {
     </details>
   `);
 
+  document.getElementById("openSettingsBtn").onclick = () => showSettingsView({ onLock });
   document.getElementById("openHomesBtn").onclick = () => showHomesView({ onLock });
   document.getElementById("openAbgabeBtn").onclick = () => showAbgabeView({ onLock });
   document.getElementById("openNachbestellBtn").onclick = () => showNachbestellungView({ onLock });
@@ -2834,6 +2975,10 @@ export function resumeCurrentView({ onLock }) {
 
   if (view === "kilometer") {
     return showKilometerView({ onLock, summaryFrom: context.summaryFrom || "", summaryTo: context.summaryTo || "" });
+  }
+
+  if (view === "settings") {
+    return showSettingsView({ onLock });
   }
 
   showDashboardView({ onLock });

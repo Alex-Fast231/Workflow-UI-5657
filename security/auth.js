@@ -90,3 +90,33 @@ export async function verifyPracticePassword({ password, cryptoMeta }) {
     return false;
   }
 }
+
+export async function updateSecurityCredentials({ runtimeKey, currentCryptoMeta, password, pin }) {
+  if (!runtimeKey) {
+    throw new Error("Runtime-Key fehlt");
+  }
+
+  const nextPassword = String(password || "").trim();
+  const nextPin = String(pin || "").trim();
+
+  if (!nextPassword || nextPassword.length < 8) {
+    throw new Error("Das Praxispasswort muss mindestens 8 Zeichen haben.");
+  }
+
+  if (!nextPin || nextPin.length < 6) {
+    throw new Error("Die Workflow-PIN muss mindestens 6 Zeichen haben.");
+  }
+
+  const cryptoMeta = await createCryptoMeta({
+    password: nextPassword,
+    pin: nextPin,
+    dataKey: runtimeKey
+  });
+
+  if (currentCryptoMeta?.backupSaltBase64 && !cryptoMeta.backupSaltBase64) {
+    cryptoMeta.backupSaltBase64 = currentCryptoMeta.backupSaltBase64;
+  }
+
+  await saveCryptoMeta(cryptoMeta);
+  return cryptoMeta;
+}
