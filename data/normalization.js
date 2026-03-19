@@ -199,6 +199,9 @@ function normalizeNachbestellHistory(items) {
       createdAt: ensureString(source.createdAt),
       title: ensureString(source.title),
       doctor: ensureString(source.doctor),
+      rezeptCount: Number.isFinite(Number(source.rezeptCount)) ? Number(source.rezeptCount) : 0,
+      patientCount: Number.isFinite(Number(source.patientCount)) ? Number(source.patientCount) : 0,
+      snapshotHtml: ensureString(source.snapshotHtml),
       lines: ensureArray(source.lines).map((line) => ({
         patient: ensureString(line?.patient),
         geb: ensureString(line?.geb),

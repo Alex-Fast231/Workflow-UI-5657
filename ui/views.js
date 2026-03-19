@@ -35,7 +35,9 @@ import {
   filterNachbestellRows,
   getDoctorList,
   saveAbgabeHistory,
-  saveNachbestellHistory,
+  saveNachbestellHistorySnapshot,
+  deleteNachbestellHistoryItem,
+  buildNachbestellLetterData,
   buildAbgabeTree,
   buildNachbestellTree,
   createRezeptTimeEntry,
@@ -365,11 +367,11 @@ function render(html) {
   app.innerHTML = html;
 }
 
-function printHtml(title, bodyHtml) {
+function openHtmlDocument(title, bodyHtml, { autoPrint = false } = {}) {
   const win = window.open("", "_blank", "width=900,height=700");
   if (!win) {
-    alert("Druckfenster konnte nicht geöffnet werden.");
-    return;
+    alert("Fenster konnte nicht geöffnet werden.");
+    return null;
   }
 
   win.document.write(`
@@ -383,6 +385,7 @@ function printHtml(title, bodyHtml) {
           font-family: Arial, sans-serif;
           padding: 24px;
           color:#111827;
+          line-height: 1.45;
         }
         h1{
           font-size: 22px;
@@ -396,18 +399,152 @@ function printHtml(title, bodyHtml) {
           color:#6b7280;
           font-size:12px;
         }
+        .print-actions{
+          margin-top: 20px;
+          display:flex;
+          gap:12px;
+          flex-wrap:wrap;
+        }
+        button{
+          border:0;
+          border-radius:8px;
+          padding:10px 14px;
+          cursor:pointer;
+          background:#2563eb;
+          color:white;
+          font-weight:600;
+        }
+        button.secondary{
+          background:#e5e7eb;
+          color:#111827;
+        }
+        @media print{
+          .print-actions{ display:none; }
+          body{ padding:0; }
+        }
       </style>
     </head>
     <body>
-      <h1>${escapeHtml(title)}</h1>
       ${bodyHtml}
+      <div class="print-actions">
+        <button onclick="window.print()">Drucken / als PDF speichern</button>
+        <button class="secondary" onclick="window.close()">Schließen</button>
+      </div>
     </body>
     </html>
   `);
 
   win.document.close();
   win.focus();
-  win.print();
+  if (autoPrint) win.print();
+  return win;
+}
+
+function printHtml(title, bodyHtml) {
+  openHtmlDocument(title, `<h1>${escapeHtml(title)}</h1>${bodyHtml}`, { autoPrint: true });
+}
+
+function openLetterPreview(title, bodyHtml) {
+  openHtmlDocument(title, bodyHtml, { autoPrint: false });
+}
+
+function formatIsoDateShort(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return formatCurrentDateShort(new Date());
+  return date.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+function escapeAndPreserveLineBreaks(value) {
+  return escapeHtml(String(value || "")).replace(/\n/g, "<br>");
+}
+
+function flattenNachbestellLines(letterData = {}) {
+  return (letterData.groups || []).flatMap((group) =>
+    (group.patients || []).flatMap((patient) =>
+      (patient.rezepte || []).map((rezept) => ({
+        patient: patient.patientName || "",
+        geb: patient.geb || "",
+        heim: group.type === "hausbesuch" ? "Hausbesuch" : (group.title || ""),
+        text: rezept.text || ""
+      }))
+    )
+  );
+}
+
+function renderNachbestellLetterHtml(letterData = {}) {
+  const createdAt = formatIsoDateShort(letterData.createdAt);
+  const praxis = letterData.praxis || {};
+  const doctor = letterData.doctor || "";
+  const therapistName = praxis.therapistName || "";
+
+  return `
+    <style>
+      .letter-wrap{max-width:820px;margin:0 auto;color:#111827;}
+      .letter-head{margin-bottom:28px;}
+      .letter-head .line{font-size:14px;}
+      .letter-recipient{margin:22px 0 10px;}
+      .letter-subject{margin:14px 0 18px;font-weight:700;}
+      .letter-date{margin:8px 0 18px;}
+      .letter-text{margin-bottom:20px;}
+      .letter-group{margin:18px 0 0;}
+      .letter-group-title{font-weight:700;}
+      .letter-group-address{margin-top:2px;white-space:pre-line;}
+      .letter-patient{margin:12px 0 0;}
+      .letter-patient-name{font-weight:700;}
+      .letter-list{margin:4px 0 0 20px;padding:0;}
+      .letter-list li{margin:2px 0;}
+      .letter-closing{margin-top:28px;}
+    </style>
+    <div class="letter-wrap">
+      <div class="letter-head">
+        <div class="line"><strong>${escapeHtml(praxis.name || 'Physio Strobl')}</strong></div>
+        <div class="line">${escapeHtml(praxis.department || 'Abteilung FaSt')}</div>
+        ${praxis.address ? `<div class="line">${escapeAndPreserveLineBreaks(praxis.address)}</div>` : ''}
+        ${praxis.phone ? `<div class="line">Tel.: ${escapeHtml(praxis.phone)}</div>` : ''}
+        ${praxis.fax ? `<div class="line">Fax.: ${escapeHtml(praxis.fax)}</div>` : ''}
+      </div>
+
+      <div class="letter-recipient">
+        <div><strong>An:</strong></div>
+        <div>${escapeHtml(doctor || '—')}</div>
+      </div>
+
+      <div class="letter-subject">Betreff: Rezeptnachbestellung Physiotherapie</div>
+      <div class="letter-date">Datum: ${escapeHtml(createdAt)}</div>
+
+      <div class="letter-text">
+        Sehr geehrte Damen und Herren,<br>
+        liebes Praxis-Team,<br><br>
+        für unsere gemeinsamen Patientinnen und Patienten bitten wir Sie, folgende Heilmittelverordnungen für Physiotherapie auszustellen und diese per Fax an folgende Nummer zu senden:<br>
+        Fax: ${escapeHtml(praxis.fax || '—')}<br>
+        Bitte senden Sie die Originale der Verordnungen anschließend per Post an die jeweils unten angegebene Einrichtung.<br>
+        Vielen Dank für Ihre Unterstützung.
+      </div>
+
+      ${(letterData.groups || []).map((group) => `
+        <div class="letter-group">
+          <div class="letter-group-title">${escapeHtml(group.title || '')}</div>
+          ${group.address ? `<div class="letter-group-address">${escapeAndPreserveLineBreaks(group.address)}</div>` : ''}
+
+          ${(group.patients || []).map((patient) => `
+            <div class="letter-patient">
+              <div class="letter-patient-name">${escapeHtml(patient.patientName || 'Patient')}${patient.geb ? ` – geb. ${escapeHtml(patient.geb)}` : ''}</div>
+              <ul class="letter-list">
+                ${(patient.rezepte || []).map((rezept) => `<li>${escapeHtml(rezept.text || '—')}</li>`).join('')}
+              </ul>
+            </div>
+          `).join('')}
+        </div>
+      `).join('')}
+
+      <div class="letter-closing">
+        Mit freundlichen Grüßen<br><br>
+        ${escapeHtml(therapistName || '')}<br>
+        Physiotherapeut<br>
+        ${escapeHtml(praxis.name || 'Physio Strobl')} – ${escapeHtml(praxis.department || 'Abteilung FaSt')}
+      </div>
+    </div>
+  `;
 }
 
 async function wipeAllAppData() {
@@ -2143,8 +2280,8 @@ export function showNachbestellungView({ onLock, doctorFilter = "", textFilter =
       `}
 
       <div class="row" style="margin-top:12px;">
-        <button id="saveNachbestellSelectionBtn">Auswahl speichern</button>
-        <button id="printNachbestellSelectionBtn" class="secondary">Auswahl drucken</button>
+        <button id="createNachbestellLetterBtn">Nachbestellzettel erzeugen</button>
+        <button id="printNachbestellSelectionBtn" class="secondary">Aktuelle Auswahl drucken</button>
       </div>
 
       <div id="nachbestellMsg"></div>
@@ -2156,20 +2293,41 @@ export function showNachbestellungView({ onLock, doctorFilter = "", textFilter =
         <span class="muted">${(data.nachbestellHistory || []).length}</span>
       </summary>
       <div class="accordion-body">
-        ${((data.nachbestellHistory || []).length === 0) ? `<p class="muted">Noch keine gespeicherten Listen.</p>` : ""}
-        ${(data.nachbestellHistory || []).slice(0, 8).map((item) => `
+        ${((data.nachbestellHistory || []).length === 0) ? `<p class="muted">Noch keine gespeicherten Nachbestellzettel.</p>` : ""}
+        ${(data.nachbestellHistory || []).slice(0, 20).map((item) => `
           <div class="compact-card">
             <div style="font-weight:600;">${escapeHtml(item.title || "Nachbestellung")}</div>
             <div class="compact-meta">
               Arzt: ${escapeHtml(item.doctor || "—")}<br>
-              ${escapeHtml(item.createdAt || "")}<br>
-              ${item.lines?.length || 0} Zeile(n)
+              Datum: ${escapeHtml(formatIsoDateShort(item.createdAt))}<br>
+              ${Number(item.patientCount || 0)} Patient(en) · ${Number(item.rezeptCount || item.lines?.length || 0)} Rezept(e)
+            </div>
+            <div class="row" style="margin-top:10px;">
+              <button class="secondary history-open-btn" data-history-id="${escapeHtml(item.id)}">Öffnen</button>
+              <button class="secondary history-print-btn" data-history-id="${escapeHtml(item.id)}">Drucken</button>
+              <button class="secondary history-delete-btn" data-history-id="${escapeHtml(item.id)}">Löschen</button>
             </div>
           </div>
         `).join("")}
       </div>
     </details>
   `);
+
+  function getChosenRows() {
+    const chosenIds = getCheckedRowIds(".nachbestellCheck", app);
+    return filteredRows.filter((row) => chosenIds.includes(row.rowId));
+  }
+
+  function buildCurrentLetter() {
+    const chosenRows = getChosenRows();
+    if (chosenRows.length === 0) throw new Error("Bitte mindestens einen Eintrag auswählen.");
+    const letterData = buildNachbestellLetterData(getRuntimeData(), chosenRows);
+    return {
+      letterData,
+      bodyHtml: renderNachbestellLetterHtml(letterData),
+      lines: flattenNachbestellLines(letterData)
+    };
+  }
 
   document.getElementById("backDashboardBtn").onclick = () => showDashboardView({ onLock });
 
@@ -2206,60 +2364,79 @@ export function showNachbestellungView({ onLock, doctorFilter = "", textFilter =
     });
   });
 
-  document.getElementById("saveNachbestellSelectionBtn").onclick = async () => {
+  document.getElementById("createNachbestellLetterBtn").onclick = async () => {
     const msg = document.getElementById("nachbestellMsg");
     msg.className = "error";
     msg.textContent = "";
 
-    const chosenIds = getCheckedRowIds(".nachbestellCheck", app);
-    const chosenRows = filteredRows.filter((row) => chosenIds.includes(row.rowId));
-
-    if (chosenRows.length === 0) {
-      msg.textContent = "Bitte mindestens einen Eintrag auswählen.";
-      return;
-    }
-
     try {
-      saveNachbestellHistory(
-        `Nachbestellung ${new Date().toLocaleString("de-DE")}`,
-        doctorFilter,
-        chosenRows
-      );
+      const { letterData, bodyHtml, lines } = buildCurrentLetter();
+      saveNachbestellHistorySnapshot({
+        title: `Nachbestellung ${letterData.doctor} · ${formatIsoDateShort(letterData.createdAt)}`,
+        doctor: letterData.doctor,
+        createdAt: letterData.createdAt,
+        rezeptCount: letterData.rezeptCount,
+        patientCount: letterData.patientCount,
+        snapshotHtml: bodyHtml,
+        lines
+      });
       await queuePersistRuntimeData();
+      openLetterPreview(letterData.title, bodyHtml);
       showNachbestellungView({
         onLock,
-        doctorFilter,
-        textFilter,
+        doctorFilter: "",
+        textFilter: "",
         selectedIds: []
       });
     } catch (err) {
       console.error(err);
-      msg.textContent = "Nachbestell-Historie konnte nicht gespeichert werden.";
+      msg.textContent = err?.message || "Nachbestellzettel konnte nicht erzeugt werden.";
     }
   };
 
   document.getElementById("printNachbestellSelectionBtn").onclick = () => {
-    const chosenIds = getCheckedRowIds(".nachbestellCheck", app);
-    const chosenRows = filteredRows.filter((row) => chosenIds.includes(row.rowId));
-
-    if (chosenRows.length === 0) {
-      alert("Bitte mindestens einen Eintrag auswählen.");
-      return;
+    try {
+      const { letterData, bodyHtml } = buildCurrentLetter();
+      openHtmlDocument(letterData.title, bodyHtml, { autoPrint: true });
+    } catch (err) {
+      alert(err?.message || 'Nachbestellzettel konnte nicht gedruckt werden.');
     }
-
-    printHtml(
-      "Nachbestellung",
-      chosenRows.map((row) => `
-        <div class="row">
-          <strong>Arzt:</strong> ${escapeHtml(row.doctor || "—")}<br>
-          ${escapeHtml(row.patient || "—")} · ${escapeHtml(row.heim || "—")}<br>
-          <span class="muted">Geburt: ${escapeHtml(row.geb || "—")}</span><br>
-          <span class="muted">${escapeHtml(row.text || "—")}</span><br>
-          <span class="muted">Status: ${escapeHtml(row.status || "—")}</span>
-        </div>
-      `).join("")
-    );
   };
+
+  document.querySelectorAll('.history-open-btn').forEach((button) => {
+    button.onclick = () => {
+      const historyId = button.dataset.historyId || '';
+      const item = (getRuntimeData().nachbestellHistory || []).find((entry) => entry.id === historyId);
+      if (!item?.snapshotHtml) {
+        alert('Dieser Historieneintrag enthält keinen gespeicherten Zettel.');
+        return;
+      }
+      openLetterPreview(item.title || 'Nachbestellung', item.snapshotHtml);
+    };
+  });
+
+  document.querySelectorAll('.history-print-btn').forEach((button) => {
+    button.onclick = () => {
+      const historyId = button.dataset.historyId || '';
+      const item = (getRuntimeData().nachbestellHistory || []).find((entry) => entry.id === historyId);
+      if (!item?.snapshotHtml) {
+        alert('Dieser Historieneintrag enthält keinen gespeicherten Zettel.');
+        return;
+      }
+      openHtmlDocument(item.title || 'Nachbestellung', item.snapshotHtml, { autoPrint: true });
+    };
+  });
+
+  document.querySelectorAll('.history-delete-btn').forEach((button) => {
+    button.onclick = async () => {
+      const historyId = button.dataset.historyId || '';
+      if (!historyId) return;
+      if (!confirm('Diesen Nachbestell-Historieneintrag wirklich löschen?')) return;
+      deleteNachbestellHistoryItem(historyId);
+      await queuePersistRuntimeData();
+      showNachbestellungView({ onLock, doctorFilter, textFilter, selectedIds: normalizedSelectedIds });
+    };
+  });
 }
 
 export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "" }) {

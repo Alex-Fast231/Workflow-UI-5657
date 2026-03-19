@@ -764,6 +764,130 @@ export function filterAbgabeRows(rows, query) {
   });
 }
 
+
+function findNachbestellContext(data, row) {
+  const home = (data.homes || []).find((item) => item.homeId === row.homeId);
+  const patient = (home?.patients || []).find((item) => item.patientId === row.patientId);
+  const rezept = (patient?.rezepte || []).find((item) => item.rezeptId === row.rezeptId);
+  return { home, patient, rezept };
+}
+
+export function buildNachbestellLetterData(data, rows) {
+  const safeRows = Array.isArray(rows) ? rows.filter(Boolean) : [];
+  if (safeRows.length === 0) {
+    throw new Error('Bitte mindestens ein Rezept auswählen.');
+  }
+
+  const doctors = Array.from(new Set(safeRows.map((row) => String(row.doctor || '').trim()).filter(Boolean)));
+  if (doctors.length !== 1) {
+    throw new Error('Es kann nur ein Nachbestellzettel pro Arzt erzeugt werden.');
+  }
+
+  const doctor = doctors[0];
+  const settings = data?.settings && typeof data.settings === 'object' ? data.settings : {};
+  const groups = new Map();
+  let rezeptCount = 0;
+  let patientCount = 0;
+
+  safeRows.forEach((row) => {
+    const { home, patient, rezept } = findNachbestellContext(data, row);
+    if (!home || !patient || !rezept) return;
+
+    const isHausbesuch = !!patient.hb;
+    const groupKey = isHausbesuch ? '__hausbesuch__' : `home:${home.homeId}`;
+
+    if (!groups.has(groupKey)) {
+      groups.set(groupKey, {
+        groupKey,
+        type: isHausbesuch ? 'hausbesuch' : 'heim',
+        title: isHausbesuch ? 'Hausbesuch' : String(home.name || '').trim(),
+        address: isHausbesuch
+          ? String(settings.practiceAddress || '').trim()
+          : String(home.adresse || '').trim(),
+        patients: new Map()
+      });
+    }
+
+    const group = groups.get(groupKey);
+    if (!group.patients.has(patient.patientId)) {
+      group.patients.set(patient.patientId, {
+        patientId: patient.patientId,
+        patientName: `${String(patient.lastName || '').trim()}, ${String(patient.firstName || '').trim()}`.replace(/^,\s*/, '').trim(),
+        geb: String(patient.birthDate || '').trim(),
+        rezepte: []
+      });
+      patientCount += 1;
+    }
+
+    group.patients.get(patient.patientId).rezepte.push({
+      rezeptId: rezept.rezeptId,
+      text: `${rezeptSummary(rezept)} + HB`
+    });
+    rezeptCount += 1;
+  });
+
+  const normalizedGroups = Array.from(groups.values())
+    .map((group) => ({
+      ...group,
+      patients: Array.from(group.patients.values())
+        .map((patient) => ({
+          ...patient,
+          rezepte: patient.rezepte.sort((a, b) => String(a.text || '').localeCompare(String(b.text || ''), 'de'))
+        }))
+        .sort((a, b) => String(a.patientName || '').localeCompare(String(b.patientName || ''), 'de'))
+    }))
+    .sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'heim' ? -1 : 1;
+      return `${a.title} ${a.address}`.localeCompare(`${b.title} ${b.address}`, 'de');
+    });
+
+  return {
+    createdAt: new Date().toISOString(),
+    doctor,
+    title: `Nachbestellung ${doctor}`,
+    praxis: {
+      name: 'Physio Strobl',
+      department: 'Abteilung FaSt',
+      address: String(settings.practiceAddress || '').trim(),
+      phone: String(settings.practicePhone || '').trim(),
+      fax: String(settings.therapistFax || '').trim(),
+      therapistName: String(settings.therapistName || '').trim()
+    },
+    groups: normalizedGroups,
+    patientCount,
+    rezeptCount
+  };
+}
+
+export function saveNachbestellHistorySnapshot(snapshot) {
+  const source = snapshot && typeof snapshot === 'object' ? snapshot : {};
+  mutateRuntimeData((data) => {
+    data.nachbestellHistory.unshift({
+      id: generateId('nachbestellung'),
+      createdAt: String(source.createdAt || new Date().toISOString()),
+      title: String(source.title || 'Nachbestellung').trim(),
+      doctor: String(source.doctor || '').trim(),
+      rezeptCount: Number.isFinite(Number(source.rezeptCount)) ? Number(source.rezeptCount) : 0,
+      patientCount: Number.isFinite(Number(source.patientCount)) ? Number(source.patientCount) : 0,
+      snapshotHtml: String(source.snapshotHtml || ''),
+      lines: Array.isArray(source.lines) ? source.lines.map((line) => ({
+        patient: String(line?.patient || '').trim(),
+        geb: String(line?.geb || '').trim(),
+        heim: String(line?.heim || '').trim(),
+        text: String(line?.text || '').trim()
+      })) : []
+    });
+  });
+}
+
+export function deleteNachbestellHistoryItem(historyId) {
+  const targetId = String(historyId || '').trim();
+  if (!targetId) return;
+  mutateRuntimeData((data) => {
+    data.nachbestellHistory = (data.nachbestellHistory || []).filter((item) => item.id !== targetId);
+  });
+}
+
 export function buildNachbestellRows(data) {
   const rows = [];
 
