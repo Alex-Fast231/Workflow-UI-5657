@@ -127,21 +127,88 @@ function formatMinutesLabel(minutes) {
   return `${h} Std. ${m} Min.`;
 }
 
-function getTotalTrackedMinutes(data) {
-  let total = 0;
+function formatHoursClockLabel(minutes) {
+  const total = Math.max(0, Number(minutes) || 0);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return `${h}:${String(m).padStart(2, "0")} Stunden`;
+}
 
+function parseDeDateToComparable(value) {
+  const s = String(value || '').trim();
+  const m = s.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  if (!m) return null;
+  return `${m[3]}-${m[2]}-${m[1]}`;
+}
+
+function isDateInRange(dateValue, fromDate, toDate) {
+  const current = parseDeDateToComparable(dateValue);
+  const from = parseDeDateToComparable(fromDate);
+  const to = parseDeDateToComparable(toDate);
+  if (!current) return false;
+  if (from && current < from) return false;
+  if (to && current > to) return false;
+  return true;
+}
+
+function collectAllTimeEntries(data) {
+  const rows = [];
   (data?.homes || []).forEach((home) => {
     (home?.patients || []).forEach((patient) => {
+      const patientName = `${patient?.lastName || ""}, ${patient?.firstName || ""}`.replace(/^,\s*/, "").trim() || 'Ohne Namen';
       (patient?.rezepte || []).forEach((rezept) => {
         (rezept?.timeEntries || []).forEach((entry) => {
           const minutes = Number(entry?.minutes || 0);
-          if (Number.isFinite(minutes)) total += minutes;
+          if (!Number.isFinite(minutes) || minutes <= 0) return;
+          rows.push({
+            date: String(entry?.date || '').trim(),
+            minutes,
+            patientName,
+            homeName: home?.name || '',
+            rezeptLabel: rezeptSummary(rezept),
+            type: entry?.type || '',
+            note: entry?.note || '',
+            createdAt: entry?.createdAt || ''
+          });
         });
       });
     });
   });
+  return rows;
+}
 
-  return total;
+function getTotalTrackedMinutes(data, targetDate = "") {
+  const normalizedDate = String(targetDate || '').trim();
+  return collectAllTimeEntries(data)
+    .filter((entry) => !normalizedDate || entry.date === normalizedDate)
+    .reduce((sum, entry) => sum + entry.minutes, 0);
+}
+
+function getTimePeriodSummary(data, fromDate, toDate) {
+  const rows = collectAllTimeEntries(data)
+    .filter((entry) => isDateInRange(entry.date, fromDate, toDate));
+
+  const totalsByDate = new Map();
+  rows.forEach((entry) => {
+    totalsByDate.set(entry.date, (totalsByDate.get(entry.date) || 0) + entry.minutes);
+  });
+
+  const dailyRows = Array.from(totalsByDate.entries())
+    .map(([date, totalMinutes]) => ({ date, totalMinutes }))
+    .sort((a, b) => {
+      const ad = parseDeDateToComparable(a.date) || '';
+      const bd = parseDeDateToComparable(b.date) || '';
+      return ad.localeCompare(bd, 'de');
+    });
+
+  const totalMinutes = dailyRows.reduce((sum, row) => sum + row.totalMinutes, 0);
+
+  return {
+    fromDate: String(fromDate || '').trim(),
+    toDate: String(toDate || '').trim(),
+    totalMinutes,
+    dailyRows
+  };
 }
 
 function getPatientTimeOverview(data) {
@@ -908,7 +975,7 @@ export function showSettingsView({ onLock }) {
   };
 }
 
-export function showDashboardView({ onLock }) {
+export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo = "", showTimeOverview = false } = {}) {
   bindLockButton(onLock);
   setCurrentView("dashboard");
 
@@ -916,7 +983,10 @@ export function showDashboardView({ onLock }) {
   const homes = runtimeData?.homes || [];
   const therapistName = runtimeData?.settings?.therapistName || "—";
   const lastBackupAt = runtimeData?.ui?.lastBackupAt || "";
-  const totalTrackedMinutes = getTotalTrackedMinutes(runtimeData);
+  const todayDate = formatCurrentDateShort();
+  const totalTrackedMinutes = getTotalTrackedMinutes(runtimeData, todayDate);
+  const timePeriodSummary = getTimePeriodSummary(runtimeData, timeSummaryFrom, timeSummaryTo);
+  const hasTimeSummaryFilter = Boolean(String(timeSummaryFrom || '').trim() || String(timeSummaryTo || '').trim());
 
   render(`
     ${renderDashboardHeaderCard({ therapistName })}
@@ -928,9 +998,39 @@ export function showDashboardView({ onLock }) {
       </summary>
       <div class="accordion-body">
         <div class="compact-card" style="margin:0;">
-          <div style="font-weight:700; margin-bottom:6px;">Stunden</div>
-          <div class="compact-meta" style="font-size:16px; font-weight:700; color:var(--text);">${escapeHtml(formatMinutesLabel(totalTrackedMinutes))}</div>
-          <div class="compact-meta" style="margin-top:6px;">Aktuell geleistete Zeit</div>
+          <div style="font-weight:700; margin-bottom:6px;">Stunden heute</div>
+          <div class="compact-meta" style="font-size:16px; font-weight:700; color:var(--text);">${escapeHtml(formatHoursClockLabel(totalTrackedMinutes))}</div>
+          <div class="compact-meta" style="margin-top:6px;">Aktuelle Zeit · Heute</div>
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <button id="toggleDashboardTimeOverviewBtn" class="secondary">Zeitübersicht</button>
+        </div>
+        <div id="dashboardTimeOverviewPanel" class="compact-card" style="margin-top:10px; display:${showTimeOverview || hasTimeSummaryFilter ? 'block' : 'none'};">
+          <div style="font-weight:700; margin-bottom:10px;">Zeitübersicht</div>
+          <label for="dashboardTimeSummaryFrom">Von</label>
+          <input id="dashboardTimeSummaryFrom" type="text" value="${escapeHtml(timeSummaryFrom)}" placeholder="DD.MM.YYYY" inputmode="numeric">
+
+          <label for="dashboardTimeSummaryTo">Bis</label>
+          <input id="dashboardTimeSummaryTo" type="text" value="${escapeHtml(timeSummaryTo)}" placeholder="DD.MM.YYYY" inputmode="numeric">
+
+          <div class="row">
+            <button id="runDashboardTimeSummaryBtn">Auswertung anzeigen</button>
+          </div>
+
+          <div class="compact-card" style="margin:12px 0 0 0; padding:10px;">
+            <div style="font-weight:600;">Gesamtzeit</div>
+            <div class="compact-meta">${escapeHtml(formatHoursClockLabel(timePeriodSummary.totalMinutes))}</div>
+            <div class="compact-meta">Zeitraum: ${escapeHtml(timePeriodSummary.fromDate || '—')} bis ${escapeHtml(timePeriodSummary.toDate || '—')}</div>
+          </div>
+
+          <div style="margin-top:10px;" class="list-stack">
+            ${timePeriodSummary.dailyRows.length === 0 ? `<p class="muted">Keine Zeiten im gewählten Zeitraum.</p>` : timePeriodSummary.dailyRows.map((row) => `
+              <div class="compact-card" style="margin:0; padding:10px;">
+                <div style="font-weight:600;">${escapeHtml(row.date || 'Ohne Datum')}</div>
+                <div class="compact-meta">${escapeHtml(formatHoursClockLabel(row.totalMinutes))}</div>
+              </div>
+            `).join("")}
+          </div>
         </div>
         <div style="margin-top:10px;" class="list-stack">
           ${getPatientTimeOverview(runtimeData).length === 0 ? `<p class="muted">Noch keine Zeiten erfasst.</p>` : getPatientTimeOverview(runtimeData).map((row) => `
@@ -1024,6 +1124,29 @@ export function showDashboardView({ onLock }) {
   const dashboardTimeDate = document.getElementById("dashboardTimeDate");
   if (dashboardTimeDate) {
     bindDateAutoFormat(dashboardTimeDate);
+  }
+
+  const dashboardTimeSummaryFrom = document.getElementById("dashboardTimeSummaryFrom");
+  const dashboardTimeSummaryTo = document.getElementById("dashboardTimeSummaryTo");
+  if (dashboardTimeSummaryFrom) bindDateAutoFormat(dashboardTimeSummaryFrom);
+  if (dashboardTimeSummaryTo) bindDateAutoFormat(dashboardTimeSummaryTo);
+
+  const toggleDashboardTimeOverviewBtn = document.getElementById("toggleDashboardTimeOverviewBtn");
+  if (toggleDashboardTimeOverviewBtn) {
+    toggleDashboardTimeOverviewBtn.onclick = () => {
+      const panel = document.getElementById("dashboardTimeOverviewPanel");
+      if (!panel) return;
+      panel.style.display = panel.style.display === "none" ? "block" : "none";
+    };
+  }
+
+  const runDashboardTimeSummaryBtn = document.getElementById("runDashboardTimeSummaryBtn");
+  if (runDashboardTimeSummaryBtn) {
+    runDashboardTimeSummaryBtn.onclick = () => {
+      const fromValue = document.getElementById("dashboardTimeSummaryFrom").value.trim();
+      const toValue = document.getElementById("dashboardTimeSummaryTo").value.trim();
+      showDashboardView({ onLock, timeSummaryFrom: fromValue, timeSummaryTo: toValue, showTimeOverview: true });
+    };
   }
 
   const dashboardSaveTimeBtn = document.getElementById("dashboardSaveTimeBtn");
