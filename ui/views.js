@@ -1,5 +1,5 @@
 import { createEmptyAppData } from "../data/schema.js";
-import { setupSecurity, unlockWithPIN, updateSecurityCredentials } from "../security/auth.js";
+import { setupSecurity, unlockWithPIN } from "../security/auth.js";
 import { getRemainingLockoutMs } from "../security/lock.js";
 import {
   getCryptoMeta,
@@ -8,8 +8,6 @@ import {
   setSecurityState,
   clearRuntimeSession,
   getRuntimeData,
-  getRuntimeKey,
-  setCryptoMeta,
   setCurrentView,
   getCurrentView,
   getCurrentContext
@@ -61,7 +59,6 @@ import { mutateRuntimeData } from "../core/app-core.js";
 
 const app = document.getElementById("app");
 const lockBtn = document.getElementById("lockBtn");
-const settingsBtn = document.getElementById("settingsBtn");
 
 const collatorDE = new Intl.Collator("de", {
   sensitivity: "base",
@@ -367,7 +364,6 @@ function collectRezeptItemsFromForm() {
 }
 
 function render(html) {
-  hideSettingsButton();
   app.innerHTML = html;
 }
 
@@ -571,21 +567,8 @@ export function hideLockButton() {
   lockBtn.onclick = null;
 }
 
-export function bindSettingsButton(onOpen) {
-  if (!settingsBtn) return;
-  settingsBtn.style.display = "inline-flex";
-  settingsBtn.onclick = onOpen;
-}
-
-export function hideSettingsButton() {
-  if (!settingsBtn) return;
-  settingsBtn.style.display = "none";
-  settingsBtn.onclick = null;
-}
-
 export function showSetupView({ onSuccess }) {
   hideLockButton();
-  hideSettingsButton();
 
   render(`
     <div class="card">
@@ -676,119 +659,8 @@ export function showSetupView({ onSuccess }) {
   };
 }
 
-export function showSettingsView({ onLock }) {
-  bindLockButton(onLock);
-  hideSettingsButton();
-  setCurrentView("settings");
-
-  const runtimeData = getRuntimeData() || createEmptyAppData();
-  const settings = runtimeData.settings || {};
-
-  render(`
-    <div class="card">
-      <h2>Einstellungen</h2>
-      <p class="muted">Hier können die Daten der Ersteinrichtung bearbeitet werden.</p>
-
-      <label for="settingsTherapistName">Therapeutenname</label>
-      <input id="settingsTherapistName" type="text" autocomplete="off" value="${escapeHtml(settings.therapistName || "")}">
-
-      <label for="settingsPracticeAddress">Praxisadresse</label>
-      <textarea id="settingsPracticeAddress" rows="3" autocomplete="off">${escapeHtml(settings.practiceAddress || "")}</textarea>
-
-      <label for="settingsPracticePhone">Telefon</label>
-      <input id="settingsPracticePhone" type="tel" inputmode="numeric" autocomplete="off" value="${escapeHtml(settings.practicePhone || "")}">
-
-      <label for="settingsTherapistFax">Faxnummer</label>
-      <input id="settingsTherapistFax" type="tel" inputmode="numeric" autocomplete="off" value="${escapeHtml(settings.therapistFax || "")}">
-
-      <label for="settingsCurrentPassword">Aktuelles Praxispasswort (nur nötig bei Passwortänderung)</label>
-      <input id="settingsCurrentPassword" type="password" autocomplete="current-password">
-
-      <label for="settingsNewPassword">Neues Praxispasswort</label>
-      <input id="settingsNewPassword" type="password" autocomplete="new-password" placeholder="leer lassen, wenn unverändert">
-
-      <label for="settingsNewPin">Neue Workflow-PIN (mindestens 6 Zeichen)</label>
-      <input id="settingsNewPin" type="password" inputmode="numeric" autocomplete="new-password" placeholder="leer lassen, wenn unverändert">
-
-      <label for="settingsNewPinRepeat">Neue Workflow-PIN wiederholen</label>
-      <input id="settingsNewPinRepeat" type="password" inputmode="numeric" autocomplete="new-password" placeholder="leer lassen, wenn unverändert">
-
-      <div class="row">
-        <button id="saveSettingsBtn">Speichern</button>
-        <button id="cancelSettingsBtn" class="secondary">Zurück</button>
-      </div>
-      <div id="settingsMessage"></div>
-    </div>
-  `);
-
-  document.getElementById("cancelSettingsBtn").onclick = () => showDashboardView({ onLock });
-
-  document.getElementById("saveSettingsBtn").onclick = async () => {
-    const therapistName = document.getElementById("settingsTherapistName").value.trim();
-    const practiceAddress = document.getElementById("settingsPracticeAddress").value.trim();
-    const practicePhone = document.getElementById("settingsPracticePhone").value.trim();
-    const therapistFax = document.getElementById("settingsTherapistFax").value.trim();
-    const currentPassword = document.getElementById("settingsCurrentPassword").value;
-    const newPassword = document.getElementById("settingsNewPassword").value;
-    const newPin = document.getElementById("settingsNewPin").value;
-    const newPinRepeat = document.getElementById("settingsNewPinRepeat").value;
-    const msg = document.getElementById("settingsMessage");
-
-    msg.className = "error";
-    msg.textContent = "";
-
-    if (newPassword && newPassword.length < 8) {
-      msg.textContent = "Das neue Praxispasswort muss mindestens 8 Zeichen haben.";
-      return;
-    }
-
-    if (newPin && newPin.length < 6) {
-      msg.textContent = "Die neue Workflow-PIN muss mindestens 6 Zeichen haben.";
-      return;
-    }
-
-    if ((newPin || newPinRepeat) && newPin !== newPinRepeat) {
-      msg.textContent = "Die neue Workflow-PIN stimmt nicht überein.";
-      return;
-    }
-
-    try {
-      mutateRuntimeData((data) => {
-        data.settings.therapistName = therapistName;
-        data.settings.practiceAddress = practiceAddress;
-        data.settings.practicePhone = practicePhone;
-        data.settings.therapistFax = therapistFax;
-      });
-
-      if (newPassword || newPin) {
-        const nextCryptoMeta = await updateSecurityCredentials({
-          runtimeKey: getRuntimeKey(),
-          currentCryptoMeta: getCryptoMeta(),
-          currentPassword,
-          newPassword: newPassword || "",
-          newPin: newPin || ""
-        });
-        setCryptoMeta(nextCryptoMeta);
-      }
-
-      await queuePersistRuntimeData();
-      msg.className = "success";
-      msg.textContent = "Einstellungen gespeichert.";
-      setTimeout(() => showDashboardView({ onLock }), 250);
-    } catch (err) {
-      console.error(err);
-      if (err?.code === "CURRENT_PASSWORD_INVALID") {
-        msg.textContent = "Das aktuelle Praxispasswort ist falsch.";
-        return;
-      }
-      msg.textContent = "Einstellungen konnten nicht gespeichert werden.";
-    }
-  };
-}
-
 export function showLoginView({ onSuccess }) {
   hideLockButton();
-  hideSettingsButton();
 
   const securityState = getSecurityState();
   const remainingMs = getRemainingLockoutMs(securityState);
@@ -975,8 +847,6 @@ export function showDashboardView({ onLock }) {
       </div>
     </details>
   `);
-
-  bindSettingsButton(() => showSettingsView({ onLock }));
 
   document.getElementById("openHomesBtn").onclick = () => showHomesView({ onLock });
   document.getElementById("openAbgabeBtn").onclick = () => showAbgabeView({ onLock });
@@ -2329,17 +2199,26 @@ export function showAbgabeView({ onLock, searchText = "", selectedIds = [] }) {
       return;
     }
 
+    const therapistName = String(data?.settings?.therapistName || "").trim();
+    const createdAtLabel = new Date().toLocaleString("de-DE");
+
     printHtml(
       "Abgabeliste",
-      chosenRows.map((row) => `
-        <div class="row">
-          <strong>${escapeHtml(row.patient || "—")}</strong> · ${escapeHtml(row.heim || "—")}<br>
-          <span class="muted">Arzt: ${escapeHtml(row.arzt || "—")}</span><br>
-          <span class="muted">Ausstellung: ${escapeHtml(row.ausstell || "—")}</span><br>
-          <span class="muted">Leistung: ${escapeHtml(row.leistung || "—")} ${escapeHtml(row.anzahl || "")}</span><br>
-          ${formatAbgabeZusatz(row) ? `<span class="muted">${escapeHtml(formatAbgabeZusatz(row))}</span>` : ""}
+      `
+        <div class="row" style="margin-bottom:14px;">
+          ${therapistName ? `<div><strong>Therapeut:</strong> ${escapeHtml(therapistName)}</div>` : ""}
+          <div><strong>Erstellt am:</strong> ${escapeHtml(createdAtLabel)}</div>
         </div>
-      `).join("")
+        ${chosenRows.map((row) => `
+          <div class="row">
+            <strong>${escapeHtml(row.patient || "—")}</strong> · ${escapeHtml(row.heim || "—")}<br>
+            <span class="muted">Arzt: ${escapeHtml(row.arzt || "—")}</span><br>
+            <span class="muted">Ausstellung: ${escapeHtml(row.ausstell || "—")}</span><br>
+            <span class="muted">Leistung: ${escapeHtml(row.leistung || "—")} ${escapeHtml(row.anzahl || "")}</span><br>
+            ${formatAbgabeZusatz(row) ? `<span class="muted">${escapeHtml(formatAbgabeZusatz(row))}</span>` : ""}
+          </div>
+        `).join("")}
+      `
     );
   };
 }
@@ -2895,10 +2774,6 @@ export function resumeCurrentView({ onLock }) {
 
   if (view === "kilometer") {
     return showKilometerView({ onLock, summaryFrom: context.summaryFrom || "", summaryTo: context.summaryTo || "" });
-  }
-
-  if (view === "settings") {
-    return showSettingsView({ onLock });
   }
 
   showDashboardView({ onLock });
