@@ -714,33 +714,41 @@ export function searchPatientsInHome(home, query) {
   });
 }
 
+function buildAbgabeLeistungText(rezept) {
+  const parts = (rezept?.items || []).map((item) => {
+    if (!item) return "";
+    if (item.type === "Blanko") return "Blanko";
+    return item.count ? `${item.type} ${item.count}x` : (item.type || "");
+  }).filter(Boolean);
+
+  return parts.join(", ");
+}
+
 export function buildAbgabeRows(data) {
   const rows = [];
 
   (data.homes || []).forEach((home) => {
     (home.patients || []).forEach((patient) => {
       (patient.rezepte || []).forEach((rezept) => {
-        (rezept.items || []).forEach((item) => {
-          rows.push({
-            rowId: `${home.homeId}_${patient.patientId}_${rezept.rezeptId}_${item.itemId}`,
-            heim: home.name || "",
-            patient: `${patient.lastName || ""}, ${patient.firstName || ""}`.replace(/^,\s*/, "").trim(),
-            patientFirstName: patient.firstName || "",
-            patientLastName: patient.lastName || "",
-            geb: patient.birthDate || "",
-            ausstell: rezept.ausstell || "",
-            leistung: item.type || "",
-            anzahl: item.count || "",
-            menge: item.count || "",
-            status: rezept.status || "",
-            arzt: rezept.arzt || "",
-            befreit: !!patient.befreit,
-            bg: !!rezept.bg,
-            dt: !!rezept.dt,
-            rezeptId: rezept.rezeptId,
-            patientId: patient.patientId,
-            homeId: home.homeId
-          });
+        rows.push({
+          rowId: `${home.homeId}_${patient.patientId}_${rezept.rezeptId}`,
+          heim: home.name || "",
+          patient: `${patient.lastName || ""}, ${patient.firstName || ""}`.replace(/^,\s*/, "").trim(),
+          patientFirstName: patient.firstName || "",
+          patientLastName: patient.lastName || "",
+          geb: patient.birthDate || "",
+          ausstell: rezept.ausstell || "",
+          leistung: buildAbgabeLeistungText(rezept),
+          anzahl: "",
+          menge: "",
+          status: rezept.status || "",
+          arzt: rezept.arzt || rezept.doctor || "",
+          befreit: !!patient.befreit,
+          bg: !!rezept.bg,
+          dt: !!rezept.dt,
+          rezeptId: rezept.rezeptId,
+          patientId: patient.patientId,
+          homeId: home.homeId
         });
       });
     });
@@ -1022,19 +1030,17 @@ export function buildAbgabeTree(data) {
       const rezepte = [];
 
       (patient.rezepte || []).forEach((rezept) => {
-        (rezept.items || []).forEach((item) => {
-          rezepte.push({
-            rowId: `${home.homeId}_${patient.patientId}_${rezept.rezeptId}_${item.itemId}` ,
-            rezeptId: rezept.rezeptId,
-            status: rezept.status || "",
-            arzt: rezept.arzt || "",
-            ausstell: rezept.ausstell || "",
-            bg: !!rezept.bg,
-            dt: !!rezept.dt,
-            leistung: item.type || "",
-            anzahl: item.count || "",
-            menge: item.count || ""
-          });
+        rezepte.push({
+          rowId: `${home.homeId}_${patient.patientId}_${rezept.rezeptId}`,
+          rezeptId: rezept.rezeptId,
+          status: rezept.status || "",
+          arzt: rezept.arzt || rezept.doctor || "",
+          ausstell: rezept.ausstell || "",
+          bg: !!rezept.bg,
+          dt: !!rezept.dt,
+          leistung: buildAbgabeLeistungText(rezept),
+          anzahl: "",
+          menge: ""
         });
       });
 

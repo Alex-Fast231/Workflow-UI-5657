@@ -68,7 +68,7 @@ const allowedStatus = ["Aktiv", "Pausiert", "Abgeschlossen", "Abgegeben"].includ
 
 return {
   rezeptId: ensureString(source.rezeptId || source.id) || generateId("rezept"),
-  arzt: ensureString(source.arzt),
+  arzt: ensureString(source.arzt || source.doctor),
   ausstell: ensureString(source.ausstell),
   status: allowedStatus,
   bg: ensureBoolean(source.bg, false),
