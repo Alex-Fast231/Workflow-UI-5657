@@ -461,6 +461,28 @@ function escapeAndPreserveLineBreaks(value) {
   return escapeHtml(String(value || "")).replace(/\n/g, "<br>");
 }
 
+function buildCleanLetterHeaderLines(lines = []) {
+  const seen = new Set();
+  const cleaned = [];
+
+  for (const rawLine of lines) {
+    const splitLines = String(rawLine || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    for (const line of splitLines) {
+      const normalized = line.replace(/\s+/g, " ").trim().toLowerCase();
+      if (!normalized) continue;
+      if (seen.has(normalized)) continue;
+      seen.add(normalized);
+      cleaned.push(line);
+    }
+  }
+
+  return cleaned;
+}
+
 function flattenNachbestellLines(letterData = {}) {
   return (letterData.groups || []).flatMap((group) =>
     (group.patients || []).flatMap((patient) =>
@@ -479,6 +501,13 @@ function renderNachbestellLetterHtml(letterData = {}) {
   const praxis = letterData.praxis || {};
   const doctor = letterData.doctor || "";
   const therapistName = praxis.therapistName || "";
+  const headerLines = buildCleanLetterHeaderLines([
+    praxis.name,
+    praxis.department,
+    praxis.address,
+    praxis.phone ? `Tel.: ${praxis.phone}` : "",
+    praxis.fax ? `Fax.: ${praxis.fax}` : ""
+  ]);
 
   return `
     <style>
@@ -500,11 +529,7 @@ function renderNachbestellLetterHtml(letterData = {}) {
     </style>
     <div class="letter-wrap">
       <div class="letter-head">
-        <div class="line"><strong>${escapeHtml(praxis.name || 'Physio Strobl')}</strong></div>
-        <div class="line">${escapeHtml(praxis.department || 'Abteilung FaSt')}</div>
-        ${praxis.address ? `<div class="line">${escapeAndPreserveLineBreaks(praxis.address)}</div>` : ''}
-        ${praxis.phone ? `<div class="line">Tel.: ${escapeHtml(praxis.phone)}</div>` : ''}
-        ${praxis.fax ? `<div class="line">Fax.: ${escapeHtml(praxis.fax)}</div>` : ''}
+        ${headerLines.map((line, index) => `<div class="line">${index === 0 ? `<strong>${escapeHtml(line)}</strong>` : escapeHtml(line)}</div>`).join('')}
       </div>
 
       <div class="letter-recipient">
