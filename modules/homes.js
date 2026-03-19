@@ -609,57 +609,6 @@ export function updateRezept(homeId, patientId, rezeptId, payload) {
   });
 }
 
-export function deleteRezept(homeId, patientId, rezeptId) {
-  mutateRuntimeData((data) => {
-    const home = getHomeById(data, homeId);
-    if (!home) throw new Error("Heim nicht gefunden");
-
-    const patient = getPatientById(home, patientId);
-    if (!patient) throw new Error("Patient nicht gefunden");
-
-    const rezept = getRezeptById(patient, rezeptId);
-    if (!rezept) throw new Error("Rezept nicht gefunden");
-
-    ensureRezeptTimeState(rezept);
-
-    const entryIds = new Set((rezept.entries || []).map((entry) => String(entry?.entryId || "")).filter(Boolean));
-    const timeEntryIds = new Set((rezept.timeEntries || []).map((item) => String(item?.timeEntryId || "")).filter(Boolean));
-
-    ensureKilometerState(data);
-    data.kilometer.travelLog = (data.kilometer.travelLog || []).filter((item) => {
-      const relatedEntryId = String(item?.relatedEntryId || "");
-      return !relatedEntryId || !entryIds.has(relatedEntryId);
-    });
-
-    const beforeLength = patient.rezepte.length;
-    patient.rezepte = patient.rezepte.filter((item) => item.rezeptId !== rezeptId);
-
-    if (patient.rezepte.length === beforeLength) {
-      throw new Error("Rezept nicht gefunden");
-    }
-
-    patient.rezepte.forEach((otherRezept) => {
-      ensureRezeptTimeState(otherRezept);
-
-      (otherRezept.entries || []).forEach((entry) => {
-        if (timeEntryIds.has(String(entry?.linkedTimeEntryId || ""))) {
-          entry.linkedTimeEntryId = "";
-        }
-      });
-
-      otherRezept.timeEntries = (otherRezept.timeEntries || []).filter((item) =>
-        !entryIds.has(String(item?.sourceEntryId || ""))
-      );
-
-      const lastTimeEntry = otherRezept.timeEntries
-        .slice()
-        .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))[0];
-
-      otherRezept.zeitMeta.lastTimeEntryAt = lastTimeEntry?.createdAt || "";
-    });
-  });
-}
-
 export function getRezeptById(patient, rezeptId) {
   return (patient?.rezepte || []).find((rezept) => rezept.rezeptId === rezeptId) || null;
 }

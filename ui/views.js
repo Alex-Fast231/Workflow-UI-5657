@@ -24,7 +24,6 @@ import {
   updateHomeAddress,
   createRezept,
   updateRezept,
-  deleteRezept,
   createRezeptEntry,
   updateRezeptEntry,
   getHomeById,
@@ -2021,7 +2020,6 @@ export function showEditRezeptView({ onLock, homeId, patientId, rezeptId }) {
       ${renderRezeptItemsEditor(items)}
 
       <button id="updateRezeptBtn">Änderungen speichern</button>
-      <button id="deleteRezeptBtn" class="danger">Rezept löschen</button>
       <div id="rezeptMsg"></div>
     </div>
   `);
@@ -2065,24 +2063,6 @@ export function showEditRezeptView({ onLock, homeId, patientId, rezeptId }) {
     } catch (err) {
       console.error(err);
       msg.textContent = "Rezept konnte nicht aktualisiert werden.";
-    }
-  };
-
-  document.getElementById("deleteRezeptBtn").onclick = async () => {
-    const ok = window.confirm(
-      "Rezept wirklich löschen?
-
-Dokumentationseinträge und Zeiteinträge werden ebenfalls mit gelöscht."
-    );
-    if (!ok) return;
-
-    try {
-      deleteRezept(homeId, patientId, rezeptId);
-      await queuePersistRuntimeData();
-      showPatientDetailView({ onLock, homeId, patientId });
-    } catch (err) {
-      console.error(err);
-      alert(err?.message || "Rezept konnte nicht gelöscht werden.");
     }
   };
 }
