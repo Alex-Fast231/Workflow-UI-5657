@@ -35,6 +35,7 @@ import {
   filterNachbestellRows,
   getDoctorList,
   saveAbgabeHistory,
+  deleteAbgabeHistoryItem,
   saveNachbestellHistorySnapshot,
   deleteNachbestellHistoryItem,
   buildNachbestellLetterData,
@@ -2038,6 +2039,29 @@ function sortAbgabeRowsForOutput(rows) {
   });
 }
 
+
+function renderAbgabeSheetHtml(rows, options = {}) {
+  const normalizedRows = sortAbgabeRowsForOutput(rows || []);
+  const therapistName = String(options?.therapistName || "").trim() || "—";
+  const createdAtLabel = formatIsoDateShort(options?.createdAt);
+
+  return `
+    <div style="border-bottom:1px solid #d1d5db; padding:0 0 12px 0; margin-bottom:14px;">
+      <div><strong>Therapeut:</strong> ${escapeHtml(therapistName)}</div>
+      <div><strong>Erstellt am:</strong> ${escapeHtml(createdAtLabel)}</div>
+    </div>
+    ${normalizedRows.map((row) => `
+      <div class="row">
+        <strong>${escapeHtml(row.patient || "—")}</strong> · ${escapeHtml(row.heim || "—")}<br>
+        <span class="muted">Arzt: ${escapeHtml(row.arzt || "—")}</span><br>
+        <span class="muted">Ausstellung: ${escapeHtml(row.ausstell || "—")}</span><br>
+        <span class="muted">Leistung: ${escapeHtml(row.leistung || "—")} ${escapeHtml(row.anzahl || "")}</span><br>
+        ${formatAbgabeZusatz(row) ? `<span class="muted">${escapeHtml(formatAbgabeZusatz(row))}</span>` : ""}
+      </div>
+    `).join("")}
+  `;
+}
+
 export function showAbgabeView({ onLock, searchText = "", selectedIds = [] }) {
   bindLockButton(onLock);
   setCurrentView("abgabe", { searchText, selectedIds });
@@ -2140,12 +2164,17 @@ export function showAbgabeView({ onLock, searchText = "", selectedIds = [] }) {
       </summary>
       <div class="accordion-body">
         ${((data.abgabeHistory || []).length === 0) ? `<p class="muted">Noch keine gespeicherten Listen.</p>` : ""}
-        ${(data.abgabeHistory || []).slice(0, 8).map(item => `
+        ${(data.abgabeHistory || []).slice(0, 20).map(item => `
           <div class="compact-card">
             <div style="font-weight:600;">${escapeHtml(item.title || "Abgabeliste")}</div>
             <div class="compact-meta">
-              ${escapeHtml(item.createdAt || "")}<br>
+              Datum: ${escapeHtml(formatIsoDateShort(item.createdAt))}<br>
               ${item.rows?.length || 0} Zeile(n)
+            </div>
+            <div class="row" style="margin-top:10px;">
+              <button class="secondary abgabe-history-open-btn" data-history-id="${escapeHtml(item.id)}">Öffnen</button>
+              <button class="secondary abgabe-history-print-btn" data-history-id="${escapeHtml(item.id)}">Drucken</button>
+              <button class="secondary abgabe-history-delete-btn" data-history-id="${escapeHtml(item.id)}">Löschen</button>
             </div>
           </div>
         `).join("")}
@@ -2181,7 +2210,13 @@ export function showAbgabeView({ onLock, searchText = "", selectedIds = [] }) {
     }
 
     try {
-      saveAbgabeHistory(`Abgabeliste ${new Date().toLocaleString("de-DE")}`, chosenRows);
+      const createdAt = new Date().toISOString();
+      const therapistName = String(getRuntimeData()?.settings?.therapistName || "").trim() || "—";
+      const bodyHtml = renderAbgabeSheetHtml(chosenRows, { therapistName, createdAt });
+      saveAbgabeHistory(`Abgabeliste ${formatIsoDateShort(createdAt)}`, chosenRows, {
+        createdAt,
+        snapshotHtml: bodyHtml
+      });
       await queuePersistRuntimeData();
       showAbgabeView({ onLock, searchText, selectedIds: [] });
     } catch (err) {
@@ -2199,32 +2234,53 @@ export function showAbgabeView({ onLock, searchText = "", selectedIds = [] }) {
       return;
     }
 
-    const therapistName = String(data?.settings?.therapistName || "").trim() || "—";
-    const createdAtLabel = new Date().toLocaleDateString("de-DE", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric"
+    const therapistName = String(getRuntimeData()?.settings?.therapistName || "").trim() || "—";
+    const bodyHtml = renderAbgabeSheetHtml(chosenRows, {
+      therapistName,
+      createdAt: new Date().toISOString()
     });
 
-    printHtml(
-      "Abgabeliste",
-      `
-        <div style="border-bottom:1px solid #d1d5db; padding:0 0 12px 0; margin-bottom:14px;">
-          <div><strong>Therapeut:</strong> ${escapeHtml(therapistName)}</div>
-          <div><strong>Erstellt am:</strong> ${escapeHtml(createdAtLabel)}</div>
-        </div>
-        ${chosenRows.map((row) => `
-          <div class="row">
-            <strong>${escapeHtml(row.patient || "—")}</strong> · ${escapeHtml(row.heim || "—")}<br>
-            <span class="muted">Arzt: ${escapeHtml(row.arzt || "—")}</span><br>
-            <span class="muted">Ausstellung: ${escapeHtml(row.ausstell || "—")}</span><br>
-            <span class="muted">Leistung: ${escapeHtml(row.leistung || "—")} ${escapeHtml(row.anzahl || "")}</span><br>
-            ${formatAbgabeZusatz(row) ? `<span class="muted">${escapeHtml(formatAbgabeZusatz(row))}</span>` : ""}
-          </div>
-        `).join("")}
-      `
-    );
+    openHtmlDocument("Abgabeliste", bodyHtml, { autoPrint: true });
   };
+
+  document.querySelectorAll('.abgabe-history-open-btn').forEach((button) => {
+    button.onclick = () => {
+      const historyId = button.dataset.historyId || '';
+      const item = (getRuntimeData().abgabeHistory || []).find((entry) => entry.id === historyId);
+      if (!item) return;
+      const therapistName = String(getRuntimeData()?.settings?.therapistName || "").trim() || "—";
+      const bodyHtml = item.snapshotHtml || renderAbgabeSheetHtml(item.rows || [], {
+        therapistName,
+        createdAt: item.createdAt
+      });
+      openLetterPreview(item.title || 'Abgabeliste', bodyHtml);
+    };
+  });
+
+  document.querySelectorAll('.abgabe-history-print-btn').forEach((button) => {
+    button.onclick = () => {
+      const historyId = button.dataset.historyId || '';
+      const item = (getRuntimeData().abgabeHistory || []).find((entry) => entry.id === historyId);
+      if (!item) return;
+      const therapistName = String(getRuntimeData()?.settings?.therapistName || "").trim() || "—";
+      const bodyHtml = item.snapshotHtml || renderAbgabeSheetHtml(item.rows || [], {
+        therapistName,
+        createdAt: item.createdAt
+      });
+      openHtmlDocument(item.title || 'Abgabeliste', bodyHtml, { autoPrint: true });
+    };
+  });
+
+  document.querySelectorAll('.abgabe-history-delete-btn').forEach((button) => {
+    button.onclick = async () => {
+      const historyId = button.dataset.historyId || '';
+      if (!historyId) return;
+      if (!confirm('Diesen Abgabe-Historieneintrag wirklich löschen?')) return;
+      deleteAbgabeHistoryItem(historyId);
+      await queuePersistRuntimeData();
+      showAbgabeView({ onLock, searchText, selectedIds: [] });
+    };
+  });
 }
 
 export function showNachbestellungView({ onLock, doctorFilter = "", textFilter = "", selectedIds = [] }) {

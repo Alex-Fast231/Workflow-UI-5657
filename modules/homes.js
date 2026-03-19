@@ -960,12 +960,14 @@ export function getDoctorList(data) {
   return Array.from(set).sort((a, b) => a.localeCompare(b, "de"));
 }
 
-export function saveAbgabeHistory(title, rows) {
+export function saveAbgabeHistory(title, rows, options = {}) {
+  const source = options && typeof options === 'object' ? options : {};
   mutateRuntimeData((data) => {
     data.abgabeHistory.unshift({
       id: generateId("abgabe"),
-      createdAt: new Date().toISOString(),
+      createdAt: String(source.createdAt || new Date().toISOString()),
       title: title || "Abgabeliste",
+      snapshotHtml: String(source.snapshotHtml || ""),
       rows: rows.map((row) => ({
         heim: row.heim || "",
         patient: row.patient || "",
@@ -982,6 +984,14 @@ export function saveAbgabeHistory(title, rows) {
         dt: !!row.dt
       }))
     });
+  });
+}
+
+export function deleteAbgabeHistoryItem(historyId) {
+  const targetId = String(historyId || '').trim();
+  if (!targetId) return;
+  mutateRuntimeData((data) => {
+    data.abgabeHistory = (data.abgabeHistory || []).filter((item) => item.id !== targetId);
   });
 }
 
