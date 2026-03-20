@@ -2158,7 +2158,7 @@ export function showRezeptDetailView({ onLock, homeId, patientId, rezeptId }) {
       <button id="backPatientBtn" class="secondary">Zurück zum Patienten</button>
     </div>
 
-    <details class="accordion" open>
+    <details class="accordion">
       <summary>
         <span>Rezeptdaten</span>
         <span class="muted">${escapeHtml(rezeptSummary(rezept))}</span>
@@ -2446,7 +2446,7 @@ export function showAbgabeView({ onLock, searchText = "", selectedIds = [] }) {
       <button id="backDashboardBtn" class="secondary">Zurück zum Dashboard</button>
     </div>
 
-    <details class="accordion" open>
+    <details class="accordion">
       <summary>
         <span>Suche</span>
         <span class="muted">Filter</span>
@@ -2669,7 +2669,7 @@ export function showNachbestellungView({ onLock, doctorFilter = "", textFilter =
       <button id="backDashboardBtn" class="secondary">Zurück zum Dashboard</button>
     </div>
 
-    <details class="accordion" open>
+    <details class="accordion">
       <summary>
         <span>Filter</span>
         <span class="muted">Arzt / Suche</span>
