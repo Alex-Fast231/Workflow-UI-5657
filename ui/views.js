@@ -1075,14 +1075,21 @@ export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo 
             `).join("")}
           </div>
         </div>
-        <div style="margin-top:10px;" class="list-stack">
-          ${dashboardTodayPatients.length === 0 ? `<p class="muted">Heute noch keine Patienten dokumentiert.</p>` : dashboardTodayPatients.map((row) => `
-            <div class="compact-card" style="margin:0; padding:10px;">
-              <div style="font-weight:600;">${escapeHtml(row.patientName)}</div>
-              <div class="compact-meta">${escapeHtml(row.homeName || '—')}${row.totalMinutes > 0 ? `<br>${escapeHtml(formatMinutesLabel(row.totalMinutes))}` : ''}</div>
+        <details class="accordion" style="margin-top:10px;">
+          <summary>
+            <span>Patienten</span>
+          </summary>
+          <div class="accordion-body">
+            <div class="list-stack">
+              ${dashboardTodayPatients.length === 0 ? `<p class="muted">Heute noch keine Patienten dokumentiert.</p>` : dashboardTodayPatients.map((row) => `
+                <div class="compact-card" style="margin:0; padding:10px;">
+                  <div style="font-weight:600;">${escapeHtml(row.patientName)}</div>
+                  <div class="compact-meta">${escapeHtml(row.homeName || '—')}${row.totalMinutes > 0 ? `<br>${escapeHtml(formatMinutesLabel(row.totalMinutes))}` : ''}</div>
+                </div>
+              `).join("")}
             </div>
-          `).join("")}
-        </div>
+          </div>
+        </details>
         <details class="accordion" style="margin-top:10px;">
           <summary>
             <span>Besprechungszeit</span>
