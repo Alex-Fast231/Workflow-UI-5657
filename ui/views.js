@@ -409,6 +409,7 @@ function renderRezeptItemsEditor(items = []) {
 }
 
 function renderRezeptItemRow(item = {}, idx = 0) {
+  const isBlanko = String(item.type || "") === "Blanko";
   return `
     <div class="compact-card rezept-item-row" data-item-row="${idx}" style="padding:14px;">
       <div class="row" style="gap:12px; align-items:end; flex-wrap:wrap;">
@@ -421,21 +422,46 @@ function renderRezeptItemRow(item = {}, idx = 0) {
         </div>
         <div style="width:140px; max-width:100%;">
           <label>Anzahl</label>
-          <input class="rezept-item-count" type="number" inputmode="numeric" min="0" step="1" value="${escapeHtml(item.count || '')}" placeholder="z.B. 6">
+          <input class="rezept-item-count" type="number" inputmode="numeric" min="0" step="1" value="${escapeHtml(isBlanko ? "" : (item.count || ""))}" placeholder="z.B. 6" ${isBlanko ? "disabled" : ""}>
         </div>
       </div>
     </div>
   `;
 }
 
+function updateRezeptItemCountState(row) {
+  if (!row) return;
+  const typeSelect = row.querySelector(".rezept-item-type");
+  const countInput = row.querySelector(".rezept-item-count");
+  if (!typeSelect || !countInput) return;
+  const isBlanko = typeSelect.value === "Blanko";
+  countInput.disabled = isBlanko;
+  if (isBlanko) countInput.value = "";
+}
+
 function bindRezeptItemsEditor(items = []) {
+  const container = document.getElementById("leistungenContainer");
+  const bindRow = (row) => {
+    if (!row) return;
+    const typeSelect = row.querySelector(".rezept-item-type");
+    if (typeSelect) {
+      typeSelect.addEventListener("change", () => updateRezeptItemCountState(row));
+    }
+    updateRezeptItemCountState(row);
+  };
+
+  if (container) {
+    Array.from(container.querySelectorAll(".rezept-item-row")).forEach(bindRow);
+  }
+
   const addBtn = document.getElementById("addLeistungRowBtn");
   if (!addBtn) return;
   addBtn.onclick = () => {
-    const container = document.getElementById("leistungenContainer");
     if (!container) return;
     const idx = container.querySelectorAll("[data-item-row]").length;
     container.insertAdjacentHTML("beforeend", renderRezeptItemRow({}, idx));
+    const newRow = container.querySelector(`.rezept-item-row[data-item-row="${idx}"]`);
+    bindRow(newRow);
   };
 }
 

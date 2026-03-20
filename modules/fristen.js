@@ -87,14 +87,15 @@ export function getRezeptFristInfo(rezept) {
   }
 
   if (rezept?.bg) {
+    const latestStart = addDays(ausstellDate, 14);
     const validUntil = addMonthsSafe(ausstellDate, 2);
-    const daysRemaining = diffDays(today, validUntil);
+    const daysRemaining = diffDays(today, latestStart);
 
     return {
       mode: "bg",
-      statusText: `BG bis ${formatDateDE(validUntil)}`,
-      detailsText: "BG: 2 Monate ab Ausstellungsdatum",
-      latestStartText: null,
+      statusText: `Beginn bis ${formatDateDE(latestStart)}`,
+      detailsText: "BG: Beginn innerhalb 14 Tagen · gültig 2 Monate ab Ausstellungsdatum",
+      latestStartText: formatDateDE(latestStart),
       validUntilText: formatDateDE(validUntil),
       traffic: getTrafficLevel(daysRemaining),
       daysRemaining
@@ -108,8 +109,8 @@ export function getRezeptFristInfo(rezept) {
 
     return {
       mode: "blanko",
-      statusText: `Blanko bis ${formatDateDE(validUntil)}`,
-      detailsText: "Blanko: 4 Monate ab Ausstellungsdatum",
+      statusText: `Beginn bis ${formatDateDE(latestStart)}`,
+      detailsText: "Blanko: Beginn innerhalb 28 Tagen · gültig 4 Monate ab Ausstellungsdatum",
       latestStartText: formatDateDE(latestStart),
       validUntilText: formatDateDE(validUntil),
       traffic: getTrafficLevel(daysRemaining),
