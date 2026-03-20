@@ -1,6 +1,7 @@
 import { APP_MODULE, APP_SCHEMA_VERSION, APP_VERSION } from "../data/schema.js";
 import { finalizeAppStructure } from "../data/normalization.js";
 import { fromBase64 } from "../crypto/crypto-engine.js";
+import { getPracticePasswordFromRuntime, verifyPracticePassword } from "../security/auth.js";
 import {
   loadEncryptedAppData,
   loadCryptoMeta,
@@ -9,6 +10,7 @@ import {
   saveCryptoMeta,
   saveSecurityState
 } from "../storage/secure-store.js";
+import { getRuntimeKey } from "../core/app-core.js";
 import { createDefaultSecurityState } from "../security/lock.js";
 
 function requireZip() {
@@ -109,19 +111,26 @@ export async function exportBackup(runtimeData) {
   const encryptedAppData = await loadEncryptedAppData();
   const cryptoMeta = await loadCryptoMeta();
   const securityState = await loadSecurityState();
+  const runtimeKey = getRuntimeKey();
 
   if (!encryptedAppData || !cryptoMeta) {
     throw new Error("Kein vollständiger Sicherungsstand vorhanden");
   }
 
+  if (!runtimeKey) {
+    throw new Error("Runtime Session ist nicht entsperrt");
+  }
+
+  const practicePassword = await getPracticePasswordFromRuntime({ runtimeKey, cryptoMeta });
   const meta = buildBackupMeta(runtimeData);
   const zipLib = requireZip();
   const writer = new zipLib.ZipWriter(new zipLib.BlobWriter("application/zip"));
+  const zipOptions = { password: practicePassword, encryptionStrength: 3 };
 
-  await writer.add("appData.enc", new zipLib.TextReader(JSON.stringify(encryptedAppData)));
-  await writer.add("cryptoMeta.json", new zipLib.TextReader(JSON.stringify(cryptoMeta, null, 2)));
-  await writer.add("meta.json", new zipLib.TextReader(JSON.stringify(meta, null, 2)));
-  await writer.add("securityState.json", new zipLib.TextReader(JSON.stringify(securityState, null, 2)));
+  await writer.add("appData.enc", new zipLib.TextReader(JSON.stringify(encryptedAppData)), zipOptions);
+  await writer.add("cryptoMeta.json", new zipLib.TextReader(JSON.stringify(cryptoMeta, null, 2)), zipOptions);
+  await writer.add("meta.json", new zipLib.TextReader(JSON.stringify(meta, null, 2)), zipOptions);
+  await writer.add("securityState.json", new zipLib.TextReader(JSON.stringify(securityState, null, 2)), zipOptions);
 
   const blob = await writer.close();
   const stamp = meta.exportTimestamp.replace(/[:T]/g, "-").slice(0, 16);
@@ -184,6 +193,15 @@ function validateWrappedKeyPayload(value, filename, fieldName) {
   ensureBase64String(value.wrappedKeyBase64, `${filename}.${fieldName}.wrappedKeyBase64`);
 }
 
+function validateEncryptedSecretPayload(value, filename, fieldName) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${filename} ist unvollständig: ${fieldName} fehlt`);
+  }
+
+  ensureBase64String(value.ivBase64, `${filename}.${fieldName}.ivBase64`);
+  ensureBase64String(value.cipherBase64, `${filename}.${fieldName}.cipherBase64`);
+}
+
 export function validateCryptoMeta(cryptoMeta) {
   ensureNonEmptyObject(cryptoMeta, "cryptoMeta.json");
 
@@ -204,6 +222,12 @@ export function validateCryptoMeta(cryptoMeta) {
     cryptoMeta.wrappedDataKeyByPIN,
     "cryptoMeta.json",
     "wrappedDataKeyByPIN"
+  );
+
+  validateEncryptedSecretPayload(
+    cryptoMeta.encryptedPracticePasswordByDataKey,
+    "cryptoMeta.json",
+    "encryptedPracticePasswordByDataKey"
   );
 
   return cryptoMeta;
@@ -256,9 +280,14 @@ function validateBackupCompatibility({ encryptedAppData, cryptoMeta, meta }) {
   }
 }
 
-export async function validateBackupZip(file) {
+export async function validateBackupZip(file, practicePassword) {
   if (!file) {
     throw new Error("Keine Backup-Datei ausgewählt");
+  }
+
+  const normalizedPassword = String(practicePassword || "").trim();
+  if (!normalizedPassword || normalizedPassword.length < 8) {
+    throw new Error("Falsches Praxispasswort");
   }
 
   const zipLib = requireZip();
@@ -277,14 +306,28 @@ export async function validateBackupZip(file) {
     if (!cryptoEntry) throw new Error("Backup enthält keine cryptoMeta.json");
     if (!metaEntry) throw new Error("Backup enthält keine meta.json");
 
-    const encryptedAppData = safeJsonParse(await appEntry.getData(new zipLib.TextWriter()), "appData.enc");
-    const cryptoMeta = safeJsonParse(await cryptoEntry.getData(new zipLib.TextWriter()), "cryptoMeta.json");
-    const meta = safeJsonParse(await metaEntry.getData(new zipLib.TextWriter()), "meta.json");
-    const securityState = securityEntry
-      ? safeJsonParse(await securityEntry.getData(new zipLib.TextWriter()), "securityState.json")
-      : resetImportedSecurityState();
+    let encryptedAppData;
+    let cryptoMeta;
+    let meta;
+    let securityState;
+
+    try {
+      encryptedAppData = safeJsonParse(await appEntry.getData(new zipLib.TextWriter(), { password: normalizedPassword }), "appData.enc");
+      cryptoMeta = safeJsonParse(await cryptoEntry.getData(new zipLib.TextWriter(), { password: normalizedPassword }), "cryptoMeta.json");
+      meta = safeJsonParse(await metaEntry.getData(new zipLib.TextWriter(), { password: normalizedPassword }), "meta.json");
+      securityState = securityEntry
+        ? safeJsonParse(await securityEntry.getData(new zipLib.TextWriter(), { password: normalizedPassword }), "securityState.json")
+        : resetImportedSecurityState();
+    } catch (err) {
+      throw new Error("Falsches Praxispasswort");
+    }
 
     validateBackupCompatibility({ encryptedAppData, cryptoMeta, meta });
+
+    const passwordValid = await verifyPracticePassword({ password: normalizedPassword, cryptoMeta });
+    if (!passwordValid) {
+      throw new Error("Falsches Praxispasswort");
+    }
 
     return {
       encryptedAppData,
@@ -298,8 +341,8 @@ export async function validateBackupZip(file) {
   }
 }
 
-export async function importBackup(file) {
-  const payload = await validateBackupZip(file);
+export async function importBackup(file, practicePassword) {
+  const payload = await validateBackupZip(file, practicePassword);
   const backupSchemaVersion = Number(payload.meta?.schemaVersion ?? 0);
   const migratedEncryptedAppData = migrateBackupData(payload.encryptedAppData, backupSchemaVersion);
   const migratedCryptoMeta = migrateBackupData(payload.cryptoMeta, backupSchemaVersion);

@@ -120,3 +120,29 @@ export function toBase64(bytes) {
 export function fromBase64(base64) {
   return base64ToUint8(base64);
 }
+
+export async function encryptText(plainText, cryptoKey) {
+  const iv = randomBytes(12);
+  const encoded = textToUint8(String(plainText || ""));
+  const cipherBuffer = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    cryptoKey,
+    encoded
+  );
+
+  return {
+    ivBase64: uint8ToBase64(iv),
+    cipherBase64: uint8ToBase64(new Uint8Array(cipherBuffer))
+  };
+}
+
+export async function decryptText(encryptedPayload, cryptoKey) {
+  const iv = base64ToUint8(encryptedPayload.ivBase64);
+  const cipherBytes = base64ToUint8(encryptedPayload.cipherBase64);
+  const plainBuffer = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    cryptoKey,
+    cipherBytes
+  );
+  return uint8ToText(new Uint8Array(plainBuffer));
+}

@@ -1,4 +1,4 @@
-import { generateSalt, toBase64, fromBase64, encryptJSON, decryptJSON } from "../crypto/crypto-engine.js";
+import { generateSalt, toBase64, fromBase64, encryptJSON, decryptJSON, encryptText, decryptText } from "../crypto/crypto-engine.js";
 import { generateDataKey, wrapDataKeyWithPassword, wrapDataKeyWithPIN, unwrapDataKeyWithPassword, unwrapDataKeyWithPIN } from "../crypto/key-management.js";
 import { finalizeAppStructure } from "../data/normalization.js";
 import { createDefaultSecurityState, isLockedOut, registerFailedLogin, registerSuccessfulUnlock } from "./lock.js";
@@ -11,6 +11,7 @@ export async function createCryptoMeta({ password, pin, dataKey }) {
 
   const wrappedByPassword = await wrapDataKeyWithPassword(dataKey, password, passwordSaltBytes);
   const wrappedByPIN = await wrapDataKeyWithPIN(dataKey, pin, pinSaltBytes);
+  const encryptedPracticePasswordByDataKey = await encryptText(password, dataKey);
 
   return {
     schemaVersion: 1,
@@ -18,7 +19,8 @@ export async function createCryptoMeta({ password, pin, dataKey }) {
     pinSaltBase64: toBase64(pinSaltBytes),
     backupSaltBase64: toBase64(backupSaltBytes),
     wrappedDataKeyByPassword: wrappedByPassword,
-    wrappedDataKeyByPIN: wrappedByPIN
+    wrappedDataKeyByPIN: wrappedByPIN,
+    encryptedPracticePasswordByDataKey
   };
 }
 
@@ -78,6 +80,24 @@ export async function unlockWithPIN({ pin, cryptoMeta, encryptedAppData, securit
   }
 }
 
+
+export async function getPracticePasswordFromRuntime({ runtimeKey, cryptoMeta }) {
+  if (!runtimeKey) {
+    throw new Error("Runtime-Key fehlt");
+  }
+
+  const payload = cryptoMeta?.encryptedPracticePasswordByDataKey;
+  if (!payload?.ivBase64 || !payload?.cipherBase64) {
+    throw new Error("Praxispasswort ist nicht verfügbar");
+  }
+
+  const password = await decryptText(payload, runtimeKey);
+  if (!password || password.length < 8) {
+    throw new Error("Praxispasswort ist ungültig");
+  }
+  return password;
+}
+
 export async function verifyPracticePassword({ password, cryptoMeta }) {
   try {
     await unwrapDataKeyWithPassword(
@@ -91,31 +111,25 @@ export async function verifyPracticePassword({ password, cryptoMeta }) {
   }
 }
 
-export async function updateSecurityCredentials({ runtimeKey, currentCryptoMeta, password, pin }) {
+export async function updateSecurityCredentials({ runtimeKey, currentCryptoMeta, pin }) {
   if (!runtimeKey) {
     throw new Error("Runtime-Key fehlt");
   }
 
-  const nextPassword = String(password || "").trim();
   const nextPin = String(pin || "").trim();
-
-  if (!nextPassword || nextPassword.length < 8) {
-    throw new Error("Das Praxispasswort muss mindestens 8 Zeichen haben.");
-  }
 
   if (!nextPin || nextPin.length < 6) {
     throw new Error("Die Workflow-PIN muss mindestens 6 Zeichen haben.");
   }
 
-  const cryptoMeta = await createCryptoMeta({
-    password: nextPassword,
-    pin: nextPin,
-    dataKey: runtimeKey
-  });
+  const pinSaltBytes = generateSalt(16);
+  const wrappedByPIN = await wrapDataKeyWithPIN(runtimeKey, nextPin, pinSaltBytes);
 
-  if (currentCryptoMeta?.backupSaltBase64 && !cryptoMeta.backupSaltBase64) {
-    cryptoMeta.backupSaltBase64 = currentCryptoMeta.backupSaltBase64;
-  }
+  const cryptoMeta = {
+    ...currentCryptoMeta,
+    pinSaltBase64: toBase64(pinSaltBytes),
+    wrappedDataKeyByPIN: wrappedByPIN
+  };
 
   await saveCryptoMeta(cryptoMeta);
   return cryptoMeta;

@@ -674,6 +674,10 @@ export function hideLockButton() {
   lockBtn.onclick = null;
 }
 
+function requestPracticePasswordForBackup() {
+  return window.prompt("Bitte Praxispasswort eingeben:", "") || "";
+}
+
 async function runBackupImportFlow({ file, messageElement, successMessage, beforeReload }) {
   if (!file || !messageElement) return;
 
@@ -681,11 +685,16 @@ async function runBackupImportFlow({ file, messageElement, successMessage, befor
   messageElement.textContent = "Backup wird geprüft...";
 
   try {
-    const preview = await validateBackupZip(file);
+    const practicePassword = requestPracticePasswordForBackup().trim();
+    if (!practicePassword) {
+      throw new Error("Falsches Praxispasswort");
+    }
+
+    const preview = await validateBackupZip(file, practicePassword);
     messageElement.className = "muted";
     messageElement.textContent = `Backup geprüft: ${preview.meta?.therapistName || "FaSt-Doku"} · Export ${preview.meta?.exportTimestamp || ""}`;
 
-    await importBackup(file);
+    await importBackup(file, practicePassword);
     clearRuntimeSession();
 
     if (typeof beforeReload === "function") {
@@ -937,11 +946,7 @@ export function showSettingsView({ onLock }) {
       <label for="settingsTherapistFax">Faxnummer</label>
       <input id="settingsTherapistFax" type="tel" inputmode="numeric" autocomplete="off" value="${escapeHtml(settings.therapistFax || "")}">
 
-      <label for="settingsPracticePassword">Neues Praxispasswort</label>
-      <input id="settingsPracticePassword" type="password" autocomplete="new-password" placeholder="leer lassen = unverändert">
-
-      <label for="settingsPracticePasswordRepeat">Neues Praxispasswort wiederholen</label>
-      <input id="settingsPracticePasswordRepeat" type="password" autocomplete="new-password" placeholder="leer lassen = unverändert">
+      <div class="muted" style="margin:12px 0 16px 0;">Das Praxispasswort ist als Master-Key fest hinterlegt und kann in der App nicht geändert werden.</div>
 
       <label for="settingsWorkflowPin">Neue Workflow-PIN</label>
       <input id="settingsWorkflowPin" type="password" inputmode="numeric" autocomplete="new-password" placeholder="leer lassen = unverändert">
@@ -963,24 +968,12 @@ export function showSettingsView({ onLock }) {
     const practiceAddress = document.getElementById("settingsPracticeAddress").value.trim();
     const practicePhone = document.getElementById("settingsPracticePhone").value.trim();
     const therapistFax = document.getElementById("settingsTherapistFax").value.trim();
-    const newPassword = document.getElementById("settingsPracticePassword").value;
-    const newPasswordRepeat = document.getElementById("settingsPracticePasswordRepeat").value;
     const newPin = document.getElementById("settingsWorkflowPin").value;
     const newPinRepeat = document.getElementById("settingsWorkflowPinRepeat").value;
     const msg = document.getElementById("settingsMessage");
 
     msg.className = "error";
     msg.textContent = "";
-
-    if ((newPassword || newPasswordRepeat) && newPassword !== newPasswordRepeat) {
-      msg.textContent = "Das neue Praxispasswort stimmt nicht überein.";
-      return;
-    }
-
-    if (newPassword && newPassword.length < 8) {
-      msg.textContent = "Das Praxispasswort muss mindestens 8 Zeichen haben.";
-      return;
-    }
 
     if ((newPin || newPinRepeat) && newPin !== newPinRepeat) {
       msg.textContent = "Die neue Workflow-PIN stimmt nicht überein.";
@@ -1001,23 +994,11 @@ export function showSettingsView({ onLock }) {
         data.settings.updatedAt = new Date().toISOString();
       });
 
-      if (newPassword || newPin) {
-        const nextPassword = newPassword || window.prompt("Bitte aktuelles Praxispasswort erneut eingeben, damit es unverändert übernommen wird:", "") || "";
-        const nextPin = newPin || window.prompt("Bitte aktuelle Workflow-PIN erneut eingeben, damit sie unverändert übernommen wird:", "") || "";
-
-        if (!nextPassword || nextPassword.length < 8) {
-          throw new Error("Für die Speicherung wird ein gültiges Praxispasswort benötigt.");
-        }
-
-        if (!nextPin || nextPin.length < 6) {
-          throw new Error("Für die Speicherung wird eine gültige Workflow-PIN benötigt.");
-        }
-
+      if (newPin) {
         const nextCryptoMeta = await updateSecurityCredentials({
           runtimeKey: getRuntimeKey(),
           currentCryptoMeta: getCryptoMeta(),
-          password: nextPassword,
-          pin: nextPin
+          pin: newPin
         });
         setCryptoMeta(nextCryptoMeta);
       }
@@ -1025,8 +1006,6 @@ export function showSettingsView({ onLock }) {
       await queuePersistRuntimeData();
       msg.className = "success";
       msg.textContent = "Einstellungen gespeichert.";
-      document.getElementById("settingsPracticePassword").value = "";
-      document.getElementById("settingsPracticePasswordRepeat").value = "";
       document.getElementById("settingsWorkflowPin").value = "";
       document.getElementById("settingsWorkflowPinRepeat").value = "";
     } catch (err) {
