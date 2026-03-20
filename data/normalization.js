@@ -43,6 +43,17 @@ function normalizeItem(item) {
   };
 }
 
+function getRezeptAusstellungsdatum(source) {
+  const item = source && typeof source === "object" ? source : {};
+  return ensureString(
+    item.ausstell
+    || item.ausstellungsdatum
+    || item.issueDate
+    || item.datum
+    || item.verordnungsdatum
+  ).trim();
+}
+
 function normalizeRezept(rezept) {
   const source = rezept && typeof rezept === "object" ? rezept : {};
   let items = [];
@@ -69,7 +80,7 @@ const allowedStatus = ["Aktiv", "Pausiert", "Abgeschlossen", "Abgegeben"].includ
 return {
   rezeptId: ensureString(source.rezeptId || source.id) || generateId("rezept"),
   arzt: ensureString(source.arzt || source.doctor),
-  ausstell: ensureString(source.ausstell),
+  ausstell: getRezeptAusstellungsdatum(source),
   status: allowedStatus,
   bg: ensureBoolean(source.bg, false),
   dt: ensureBoolean(source.dt, false),

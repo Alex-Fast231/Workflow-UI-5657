@@ -810,6 +810,18 @@ export function searchPatientsInHome(home, query) {
   });
 }
 
+function getRezeptAusstellungsdatum(rezept) {
+  const source = rezept && typeof rezept === "object" ? rezept : {};
+  return String(
+    source.ausstell
+    || source.ausstellungsdatum
+    || source.issueDate
+    || source.datum
+    || source.verordnungsdatum
+    || ""
+  ).trim();
+}
+
 function buildAbgabeLeistungText(rezept) {
   const parts = (rezept?.items || []).map((item) => {
     if (!item) return "";
@@ -833,7 +845,7 @@ export function buildAbgabeRows(data) {
           patientFirstName: patient.firstName || "",
           patientLastName: patient.lastName || "",
           geb: patient.birthDate || "",
-          ausstell: rezept.ausstell || "",
+          ausstell: getRezeptAusstellungsdatum(rezept),
           leistung: buildAbgabeLeistungText(rezept),
           anzahl: "",
           menge: "",
@@ -1018,6 +1030,7 @@ export function buildNachbestellRows(data) {
           geb: patient.birthDate || "",
           heim: home.name || "",
           text: rezeptSummary(rezept),
+          ausstell: getRezeptAusstellungsdatum(rezept),
           status: rezept.status || "",
           rezeptId: rezept.rezeptId,
           patientId: patient.patientId,
