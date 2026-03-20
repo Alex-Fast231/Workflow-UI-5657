@@ -674,6 +674,36 @@ export function hideLockButton() {
   lockBtn.onclick = null;
 }
 
+async function runBackupImportFlow({ file, messageElement, successMessage, beforeReload }) {
+  if (!file || !messageElement) return;
+
+  messageElement.className = "muted";
+  messageElement.textContent = "Backup wird geprüft...";
+
+  try {
+    const preview = await validateBackupZip(file);
+    messageElement.className = "muted";
+    messageElement.textContent = `Backup geprüft: ${preview.meta?.therapistName || "FaSt-Doku"} · Export ${preview.meta?.exportTimestamp || ""}`;
+
+    await importBackup(file);
+    clearRuntimeSession();
+
+    if (typeof beforeReload === "function") {
+      await beforeReload();
+    }
+
+    messageElement.className = "success";
+    messageElement.textContent = successMessage || "Backup geladen. App wird neu gestartet…";
+    setTimeout(() => {
+      window.location.reload();
+    }, 600);
+  } catch (err) {
+    console.error(err);
+    messageElement.className = "error";
+    messageElement.textContent = `Backup-Import fehlgeschlagen: ${err.message || err}`;
+  }
+}
+
 export function showSetupView({ onSuccess }) {
   hideLockButton();
 
@@ -705,9 +735,29 @@ export function showSetupView({ onSuccess }) {
       <input id="workflowPinRepeat" type="password" inputmode="numeric" autocomplete="new-password">
 
       <button id="saveSetupBtn">Einrichtung abschließen</button>
+      <button id="restoreBackupBtn" class="secondary" style="margin-top:10px;">Backup wiederherstellen</button>
+      <input id="restoreBackupInput" type="file" accept=".zip" style="display:none;">
       <div id="setupMessage"></div>
     </div>
   `);
+
+  document.getElementById("restoreBackupBtn").onclick = () => {
+    document.getElementById("restoreBackupInput").click();
+  };
+
+  document.getElementById("restoreBackupInput").onchange = async (event) => {
+    const file = event.target.files?.[0];
+    const msg = document.getElementById("setupMessage");
+    if (!file) return;
+
+    await runBackupImportFlow({
+      file,
+      messageElement: msg,
+      successMessage: "Backup geladen. App wird neu gestartet…"
+    });
+
+    event.target.value = "";
+  };
 
   document.getElementById("saveSetupBtn").onclick = async () => {
     const therapistName = document.getElementById("therapistName").value.trim();
@@ -1251,28 +1301,13 @@ export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo 
     const msg = document.getElementById("backupMsg");
     if (!file) return;
 
-    msg.className = "muted";
-    msg.textContent = "Backup wird geprüft...";
+    await runBackupImportFlow({
+      file,
+      messageElement: msg,
+      successMessage: "Backup geladen. App wird neu gestartet…"
+    });
 
-    try {
-      const preview = await validateBackupZip(file);
-      msg.className = "muted";
-      msg.textContent = `Backup geprüft: ${preview.meta?.therapistName || "FaSt-Doku"} · Export ${preview.meta?.exportTimestamp || ""}`;
-
-      const result = await importBackup(file);
-      clearRuntimeSession();
-      msg.className = "success";
-      msg.textContent = `Backup importiert: ${result.meta?.therapistName || "FaSt-Doku"}`;
-      setTimeout(() => {
-        window.location.reload();
-      }, 600);
-    } catch (err) {
-      console.error(err);
-      msg.className = "error";
-      msg.textContent = `Backup-Import fehlgeschlagen: ${err.message || err}`;
-    } finally {
-      event.target.value = "";
-    }
+    event.target.value = "";
   };
 
   document.getElementById("resetAppBtn").onclick = async () => {

@@ -1,5 +1,6 @@
 import { APP_MODULE, APP_SCHEMA_VERSION, APP_VERSION } from "../data/schema.js";
 import { finalizeAppStructure } from "../data/normalization.js";
+import { fromBase64 } from "../crypto/crypto-engine.js";
 import {
   loadEncryptedAppData,
   loadCryptoMeta,
@@ -29,6 +30,38 @@ function ensureNonEmptyObject(value, filename) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${filename} ist ungültig`);
   }
+}
+
+function sanitizeFilenamePart(str) {
+  return String(str || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9\-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function ensureBase64String(value, fieldLabel) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${fieldLabel} fehlt`);
+  }
+
+  try {
+    const bytes = fromBase64(value);
+    if (!bytes || bytes.length === 0) {
+      throw new Error("EMPTY");
+    }
+  } catch {
+    throw new Error(`${fieldLabel} ist ungültig`);
+  }
+}
+
+export function migrateBackupData(data, fromVersion) {
+  void fromVersion;
+  return data;
 }
 
 function countRuntimeEntities(normalized) {
@@ -92,7 +125,8 @@ export async function exportBackup(runtimeData) {
 
   const blob = await writer.close();
   const stamp = meta.exportTimestamp.replace(/[:T]/g, "-").slice(0, 16);
-  const filename = `FaSt-Doku-Backup-${stamp}.zip`;
+  const therapistSlug = sanitizeFilenamePart(meta.therapistName) || "therapeut";
+  const filename = `FaSt-Doku-Backup-${therapistSlug}-${stamp}.zip`;
   return { blob, filename, meta };
 }
 
@@ -146,13 +180,8 @@ function validateWrappedKeyPayload(value, filename, fieldName) {
     throw new Error(`${filename} ist unvollständig: ${fieldName} fehlt`);
   }
 
-  if (typeof value.ivBase64 !== "string" || !value.ivBase64.trim()) {
-    throw new Error(`${filename} ist unvollständig: ${fieldName}.ivBase64 fehlt`);
-  }
-
-  if (typeof value.wrappedKeyBase64 !== "string" || !value.wrappedKeyBase64.trim()) {
-    throw new Error(`${filename} ist unvollständig: ${fieldName}.wrappedKeyBase64 fehlt`);
-  }
+  ensureBase64String(value.ivBase64, `${filename}.${fieldName}.ivBase64`);
+  ensureBase64String(value.wrappedKeyBase64, `${filename}.${fieldName}.wrappedKeyBase64`);
 }
 
 export function validateCryptoMeta(cryptoMeta) {
@@ -162,13 +191,8 @@ export function validateCryptoMeta(cryptoMeta) {
     throw new Error("cryptoMeta.json ist unvollständig: schemaVersion fehlt");
   }
 
-  if (typeof cryptoMeta.passwordSaltBase64 !== "string" || !cryptoMeta.passwordSaltBase64.trim()) {
-    throw new Error("cryptoMeta.json ist unvollständig: passwordSaltBase64 fehlt");
-  }
-
-  if (typeof cryptoMeta.pinSaltBase64 !== "string" || !cryptoMeta.pinSaltBase64.trim()) {
-    throw new Error("cryptoMeta.json ist unvollständig: pinSaltBase64 fehlt");
-  }
+  ensureBase64String(cryptoMeta.passwordSaltBase64, "cryptoMeta.json.passwordSaltBase64");
+  ensureBase64String(cryptoMeta.pinSaltBase64, "cryptoMeta.json.pinSaltBase64");
 
   validateWrappedKeyPayload(
     cryptoMeta.wrappedDataKeyByPassword,
@@ -188,21 +212,8 @@ export function validateCryptoMeta(cryptoMeta) {
 export function validateEncryptedAppData(encryptedAppData) {
   ensureNonEmptyObject(encryptedAppData, "appData.enc");
 
-  const hasCipher =
-    typeof encryptedAppData.cipherBase64 === "string" &&
-    encryptedAppData.cipherBase64.trim().length > 0;
-
-  const hasIv =
-    typeof encryptedAppData.ivBase64 === "string" &&
-    encryptedAppData.ivBase64.trim().length > 0;
-
-  if (!hasCipher) {
-    throw new Error("appData.enc enthält keinen verschlüsselten Inhalt");
-  }
-
-  if (!hasIv) {
-    throw new Error("appData.enc enthält keinen gültigen IV");
-  }
+  ensureBase64String(encryptedAppData.cipherBase64, "appData.enc.cipherBase64");
+  ensureBase64String(encryptedAppData.ivBase64, "appData.enc.ivBase64");
 
   return encryptedAppData;
 }
@@ -219,13 +230,35 @@ export function validateBackupPayload({ encryptedAppData, cryptoMeta, meta }) {
   return true;
 }
 
+function validateBackupCompatibility({ encryptedAppData, cryptoMeta, meta }) {
+  try {
+    validateBackupPayload({ encryptedAppData, cryptoMeta, meta });
+
+    const normalizedMeta = finalizeAppStructure({
+      settings: {
+        therapistName: meta.therapistName || "",
+        practicePhone: meta.practicePhone || "",
+        therapistFax: meta.therapistFax || ""
+      },
+      homes: []
+    });
+
+    if (!normalizedMeta?.settings || typeof normalizedMeta.settings !== "object") {
+      throw new Error("META_INVALID");
+    }
+
+    return true;
+  } catch (err) {
+    if (String(err?.message || err).includes("ungültig") || String(err?.message || err).includes("fehlt")) {
+      throw err;
+    }
+    throw new Error("Backup beschädigt oder nicht kompatibel");
+  }
+}
+
 export async function validateBackupZip(file) {
   if (!file) {
     throw new Error("Keine Backup-Datei ausgewählt");
-  }
-
-  if (!(file.name || "").toLowerCase().endsWith(".zip")) {
-    throw new Error("Bitte eine ZIP-Datei auswählen");
   }
 
   const zipLib = requireZip();
@@ -251,7 +284,7 @@ export async function validateBackupZip(file) {
       ? safeJsonParse(await securityEntry.getData(new zipLib.TextWriter()), "securityState.json")
       : resetImportedSecurityState();
 
-    validateBackupPayload({ encryptedAppData, cryptoMeta, meta });
+    validateBackupCompatibility({ encryptedAppData, cryptoMeta, meta });
 
     return {
       encryptedAppData,
@@ -267,10 +300,13 @@ export async function validateBackupZip(file) {
 
 export async function importBackup(file) {
   const payload = await validateBackupZip(file);
+  const backupSchemaVersion = Number(payload.meta?.schemaVersion ?? 0);
+  const migratedEncryptedAppData = migrateBackupData(payload.encryptedAppData, backupSchemaVersion);
+  const migratedCryptoMeta = migrateBackupData(payload.cryptoMeta, backupSchemaVersion);
   const securityState = resetImportedSecurityState();
 
-  await saveEncryptedAppData(payload.encryptedAppData);
-  await saveCryptoMeta(payload.cryptoMeta);
+  await saveEncryptedAppData(migratedEncryptedAppData);
+  await saveCryptoMeta(migratedCryptoMeta);
   await saveSecurityState(securityState);
 
   return {
