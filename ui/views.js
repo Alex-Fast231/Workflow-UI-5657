@@ -54,6 +54,7 @@ import {
   getKilometerOverview,
   getKilometerPointOptions,
   addManualKilometerTravel,
+  updateKilometerTravel,
   deleteKilometerTravel,
   getKilometerPeriodSummary
 } from "../modules/homes.js";
@@ -2861,9 +2862,9 @@ export function showNachbestellungView({ onLock, doctorFilter = "", textFilter =
   });
 }
 
-export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "" }) {
+export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "", editTravelId = "" }) {
   bindLockButton(onLock);
-  setCurrentView("kilometer", { summaryFrom, summaryTo });
+  setCurrentView("kilometer", { summaryFrom, summaryTo, editTravelId });
 
   const overview = getKilometerOverview();
   const pointOptions = getKilometerPointOptions();
@@ -2872,6 +2873,17 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "" }) 
   const travelLog = [...(overview.travelLog || [])].sort((a, b) =>
     collatorDE.compare(`${b.date} ${b.createdAt || ""}`, `${a.date} ${a.createdAt || ""}`)
   );
+  const editingItem = editTravelId ? travelLog.find((item) => item.travelId === editTravelId) || null : null;
+  const formTitle = editingItem ? "Fahrt bearbeiten" : "Manuelle Fahrt ergänzen";
+  const formHint = editingItem
+    ? "Kilometer, Datum und Strecke dieser Fahrt können hier korrigiert werden."
+    : "Für Ausnahmefälle wie zusätzliche Wechsel zwischen Einrichtungen. Begründung ist Pflicht.";
+  const formButtonLabel = editingItem ? "Fahrt aktualisieren" : "Manuelle Fahrt speichern";
+  const formDateValue = editingItem?.date || summaryTo || summaryFrom || "";
+  const formFromValue = editingItem?.fromPointId || "";
+  const formToValue = editingItem?.toPointId || "";
+  const formKmValue = editingItem ? String(editingItem.km ?? "") : "";
+  const formReasonValue = editingItem?.note || "";
 
   render(`
     <div class="card">
@@ -2879,37 +2891,40 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "" }) 
       <button id="backDashboardBtn" class="secondary">Zurück zum Dashboard</button>
     </div>
 
-    <details class="accordion">
+    <details class="accordion" ${editingItem ? 'open' : ''}>
       <summary>
-        <span>Manuelle Fahrt ergänzen</span>
-        <span class="muted">Ausnahmefälle</span>
+        <span>${escapeHtml(formTitle)}</span>
+        <span class="muted">${editingItem ? 'Korrektur' : 'Ausnahmefälle'}</span>
       </summary>
       <div class="accordion-body">
-      <h3>Manuelle Fahrt ergänzen</h3>
-      <p class="muted">Für Ausnahmefälle wie zusätzliche Wechsel zwischen Einrichtungen. Begründung ist Pflicht.</p>
+      <h3>${escapeHtml(formTitle)}</h3>
+      <p class="muted">${escapeHtml(formHint)}</p>
 
       <label for="manualKmDate">Datum</label>
-      <input id="manualKmDate" type="text" value="${escapeHtml(summaryTo || summaryFrom || "")}" placeholder="DD.MM.YYYY">
+      <input id="manualKmDate" type="text" value="${escapeHtml(formDateValue)}" placeholder="DD.MM.YYYY">
 
       <label for="manualKmFrom">Von</label>
       <select id="manualKmFrom">
         <option value="">Bitte wählen</option>
-        ${pointOptions.map((point) => `<option value="${escapeHtml(point.pointId)}">${escapeHtml(point.label)}${point.address ? ` – ${escapeHtml(point.address)}` : ""}</option>`).join("")}
+        ${pointOptions.map((point) => `<option value="${escapeHtml(point.pointId)}" ${point.pointId === formFromValue ? 'selected' : ''}>${escapeHtml(point.label)}${point.address ? ` – ${escapeHtml(point.address)}` : ""}</option>`).join("")}
       </select>
 
       <label for="manualKmTo">Nach</label>
       <select id="manualKmTo">
         <option value="">Bitte wählen</option>
-        ${pointOptions.map((point) => `<option value="${escapeHtml(point.pointId)}">${escapeHtml(point.label)}${point.address ? ` – ${escapeHtml(point.address)}` : ""}</option>`).join("")}
+        ${pointOptions.map((point) => `<option value="${escapeHtml(point.pointId)}" ${point.pointId === formToValue ? 'selected' : ''}>${escapeHtml(point.label)}${point.address ? ` – ${escapeHtml(point.address)}` : ""}</option>`).join("")}
       </select>
 
       <label for="manualKmValue">Kilometer</label>
-      <input id="manualKmValue" type="number" min="0" step="0.1" placeholder="z.B. 7.5">
+      <input id="manualKmValue" type="number" min="0" step="0.1" value="${escapeHtml(formKmValue)}" placeholder="z.B. 7.5">
 
       <label for="manualKmReason">Begründung</label>
-      <input id="manualKmReason" type="text" placeholder="z.B. viele Ausfälle, Patienten später, Krankenhaus">
+      <input id="manualKmReason" type="text" value="${escapeHtml(formReasonValue)}" placeholder="z.B. viele Ausfälle, Patienten später, Krankenhaus">
 
-      <button id="saveManualKmBtn">Manuelle Fahrt speichern</button>
+      <div class="row">
+        <button id="saveManualKmBtn">${escapeHtml(formButtonLabel)}</button>
+        ${editingItem ? '<button id="cancelKmEditBtn" class="secondary">Bearbeitung abbrechen</button>' : ''}
+      </div>
       <div id="manualKmMsg"></div>
       </div>
     </details>
@@ -2925,9 +2940,10 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "" }) 
           <div class="compact-card">
             <div style="font-weight:600;">${escapeHtml(item.date || "Ohne Datum")} · ${escapeHtml(formatKm(item.km || 0))}</div>
             <div class="compact-meta">${escapeHtml(item.fromLabel || "—")} → ${escapeHtml(item.toLabel || "—")}</div>
-            <div class="compact-meta">Typ: ${item.source === "auto" ? "Automatisch" : "Manuell"}</div>
+            <div class="compact-meta">Typ: ${item.source === "auto" ? "Automatisch" : "Manuell"}${item.manualAdjusted ? ' · manuell korrigiert' : ''}</div>
             ${item.note ? `<div class="compact-meta">${escapeHtml(item.note)}</div>` : ""}
             <div class="row" style="margin-top:10px;">
+              <button class="secondary editTravelBtn" data-travel-id="${escapeHtml(item.travelId || "")}">Fahrt bearbeiten</button>
               <button class="secondary deleteTravelBtn" data-travel-id="${escapeHtml(item.travelId || "")}">Fahrt löschen</button>
             </div>
           </div>
@@ -2981,7 +2997,7 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "" }) 
           <div class="compact-card">
             <div style="font-weight:600;">${escapeHtml(item.date || "Ohne Datum")} · ${escapeHtml(formatKm(item.km || 0))}</div>
             <div class="compact-meta">${escapeHtml(item.fromLabel || "—")} → ${escapeHtml(item.toLabel || "—")}</div>
-            <div class="compact-meta">Typ: ${item.source === "manual" ? "Manuell" : "Automatisch"}</div>
+            <div class="compact-meta">Typ: ${item.source === "manual" ? "Manuell" : "Automatisch"}${item.manualAdjusted ? ' · manuell korrigiert' : ''}</div>
             ${item.note ? `<div class="compact-meta">Begründung: ${escapeHtml(item.note)}</div>` : ""}
           </div>
         `).join("")}
@@ -3009,7 +3025,7 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "" }) 
     try {
       saveKilometerStartPoint({ label, address });
       await queuePersistRuntimeData();
-      showKilometerView({ onLock, summaryFrom, summaryTo });
+      showKilometerView({ onLock, summaryFrom, summaryTo, editTravelId });
     } catch (err) {
       console.error(err);
       msg.textContent = "Startpunkt konnte nicht gespeichert werden.";
@@ -3037,7 +3053,7 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "" }) 
           <div class="row">
             <strong>${escapeHtml(item.date || "Ohne Datum")}</strong> · ${escapeHtml(formatKm(item.km || 0))}<br>
             <span class="muted">${escapeHtml(item.fromLabel || "—")} → ${escapeHtml(item.toLabel || "—")}</span><br>
-            <span class="muted">Typ: ${item.source === "manual" ? "Manuell" : "Automatisch"}</span>
+            <span class="muted">Typ: ${item.source === "manual" ? "Manuell" : "Automatisch"}${item.manualAdjusted ? ' · manuell korrigiert' : ''}</span>
             ${item.note ? `<br><span class="muted">Begründung: ${escapeHtml(item.note)}</span>` : ""}
           </div>
         `).join("")}
@@ -3051,20 +3067,39 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "" }) 
     msg.textContent = "";
 
     try {
-      addManualKilometerTravel({
+      const payload = {
         date: document.getElementById("manualKmDate").value.trim(),
         fromPointId: document.getElementById("manualKmFrom").value,
         toPointId: document.getElementById("manualKmTo").value,
         km: document.getElementById("manualKmValue").value,
         note: document.getElementById("manualKmReason").value.trim()
-      });
+      };
+
+      if (editingItem) {
+        updateKilometerTravel(editingItem.travelId, payload);
+      } else {
+        addManualKilometerTravel(payload);
+      }
+
       await queuePersistRuntimeData();
       showKilometerView({ onLock, summaryFrom, summaryTo });
     } catch (err) {
       console.error(err);
-      msg.textContent = err?.message || "Manuelle Fahrt konnte nicht gespeichert werden.";
+      msg.textContent = err?.message || (editingItem ? "Fahrt konnte nicht aktualisiert werden." : "Manuelle Fahrt konnte nicht gespeichert werden.");
     }
   };
+
+  if (editingItem) {
+    document.getElementById("cancelKmEditBtn").onclick = () => {
+      showKilometerView({ onLock, summaryFrom, summaryTo });
+    };
+  }
+
+  document.querySelectorAll(".editTravelBtn").forEach((btn) => {
+    btn.onclick = () => {
+      showKilometerView({ onLock, summaryFrom, summaryTo, editTravelId: btn.dataset.travelId || "" });
+    };
+  });
 
   document.querySelectorAll(".deleteTravelBtn").forEach((btn) => {
     btn.onclick = async () => {
@@ -3074,7 +3109,7 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "" }) 
       try {
         deleteKilometerTravel(btn.dataset.travelId);
         await queuePersistRuntimeData();
-        showKilometerView({ onLock, summaryFrom, summaryTo });
+        showKilometerView({ onLock, summaryFrom, summaryTo, editTravelId: editTravelId === (btn.dataset.travelId || '') ? '' : editTravelId });
       } catch (err) {
         console.error(err);
         alert(err?.message || "Fahrt konnte nicht gelöscht werden.");
@@ -3166,7 +3201,7 @@ export function resumeCurrentView({ onLock }) {
   }
 
   if (view === "kilometer") {
-    return showKilometerView({ onLock, summaryFrom: context.summaryFrom || "", summaryTo: context.summaryTo || "" });
+    return showKilometerView({ onLock, summaryFrom: context.summaryFrom || "", summaryTo: context.summaryTo || "", editTravelId: context.editTravelId || "" });
   }
 
   if (view === "settings") {

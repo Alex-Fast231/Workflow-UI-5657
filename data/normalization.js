@@ -186,7 +186,9 @@ function normalizeKilometerState(state) {
       source: ensureString(item?.source, "auto") || "auto",
       relatedEntryId: ensureString(item?.relatedEntryId),
       note: ensureString(item?.note),
-      createdAt: ensureString(item?.createdAt, new Date().toISOString())
+      createdAt: ensureString(item?.createdAt, new Date().toISOString()),
+      updatedAt: ensureString(item?.updatedAt),
+      manualAdjusted: Boolean(item?.manualAdjusted)
     }))
   };
 }

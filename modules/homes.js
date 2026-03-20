@@ -212,6 +212,11 @@ function getLastTravelForDate(kilometerState, date) {
   return items.length ? items[items.length - 1] : null;
 }
 
+function isKilometerAutoDateAllowed(dateInput) {
+  const entryDate = normalizeDateString(dateInput);
+  return entryDate === getTodayDateString();
+}
+
 function buildPendingKilometerContextFromData(data, homeId, patientId, dateInput) {
   const home = getHomeById(data, homeId);
   if (!home) throw new Error("Heim nicht gefunden");
@@ -266,6 +271,8 @@ function buildPendingKilometerContextFromData(data, homeId, patientId, dateInput
 }
 
 function appendTravelLogIfPossible(data, homeId, patientId, dateInput, relatedEntryId) {
+  if (!isKilometerAutoDateAllowed(dateInput)) return null;
+
   const context = buildPendingKilometerContextFromData(data, homeId, patientId, dateInput);
   if (!context.needsTravel || context.samePoint || !context.knownRoute) return null;
 
@@ -402,6 +409,44 @@ export function addManualKilometerTravel(payload) {
       note,
       createdAt: new Date().toISOString()
     });
+  });
+}
+
+export function updateKilometerTravel(travelId, payload) {
+  mutateRuntimeData((data) => {
+    const kilometerState = ensureKilometerState(data);
+    const points = collectKilometerPoints(data);
+    const pointMap = new Map(points.map((point) => [point.pointId, point]));
+
+    const id = String(travelId || '').trim();
+    if (!id) throw new Error('Fahrt nicht gefunden.');
+
+    const item = (kilometerState.travelLog || []).find((row) => row.travelId === id);
+    if (!item) throw new Error('Fahrt nicht gefunden.');
+
+    const date = normalizeDateString(payload?.date);
+    const fromPointId = String(payload?.fromPointId || '').trim();
+    const toPointId = String(payload?.toPointId || '').trim();
+    const note = String(payload?.note || '').trim();
+    const km = Number(payload?.km);
+
+    if (!fromPointId || !toPointId) throw new Error('Bitte Start- und Zielpunkt auswählen.');
+    if (fromPointId === toPointId) throw new Error('Start- und Zielpunkt dürfen nicht identisch sein.');
+    if (!Number.isFinite(km) || km <= 0) throw new Error('Bitte gültige Kilometer eingeben.');
+
+    const fromPoint = pointMap.get(fromPointId);
+    const toPoint = pointMap.get(toPointId);
+    if (!fromPoint || !toPoint) throw new Error('Ausgewählte Strecke ist ungültig.');
+
+    item.date = date;
+    item.fromPointId = fromPointId;
+    item.toPointId = toPointId;
+    item.fromLabel = fromPoint.label;
+    item.toLabel = toPoint.label;
+    item.km = km;
+    item.note = note;
+    item.updatedAt = new Date().toISOString();
+    item.manualAdjusted = true;
   });
 }
 
