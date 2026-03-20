@@ -2688,6 +2688,7 @@ export function showNachbestellungView({ onLock, doctorFilter = "", textFilter =
                             <input class="nachbestellCheck" type="checkbox" data-row-id="${row.rowId}" style="width:auto;" ${selected.has(row.rowId) ? "checked" : ""}>
                             <span>
                               <strong>${escapeHtml(row.text || "—")}</strong><br>
+                              <span class="muted">Ausstellung: ${escapeHtml(row.ausstell || "—")}</span><br>
                               ${formatAbgabeZusatz(row) ? `<span class="muted">${escapeHtml(formatAbgabeZusatz(row))}</span>` : ""}
                             </span>
                           </label>
