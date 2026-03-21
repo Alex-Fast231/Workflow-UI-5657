@@ -262,23 +262,27 @@ async function saveAbwesenheit(type, from, to) {
 }
 
 async function openAbwesenheitDialog(type) {
-  const from = window.prompt('Von Datum (TT.MM.JJJJ):', '');
-  if (!from) return;
-  const to = window.prompt('Bis Datum (TT.MM.JJJJ):', '');
-  if (!to) return;
-  const fromValue = from.trim();
-  const toValue = to.trim();
-  if (!isValidDeDate(fromValue) || !isValidDeDate(toValue)) {
+  const fromInput = window.prompt('Von Datum (TT.MM.JJJJ):', '');
+  if (!fromInput) return;
+  const toInput = window.prompt('Bis Datum (TT.MM.JJJJ):', '');
+  if (!toInput) return;
+
+  const from = String(fromInput).trim();
+  const to = String(toInput).trim();
+
+  if (!isValidDeDate(from) || !isValidDeDate(to)) {
     window.alert('Bitte Datum im Format TT.MM.JJJJ eingeben.');
     return;
   }
-  const fromComparable = parseDeDateToComparable(fromValue);
-  const toComparable = parseDeDateToComparable(toValue);
-  if (toComparable < fromComparable) {
+
+  const fromComparable = parseDeDateToComparable(from);
+  const toComparable = parseDeDateToComparable(to);
+  if (!fromComparable || !toComparable || toComparable < fromComparable) {
     window.alert('Bis-Datum darf nicht vor Von-Datum liegen');
     return;
   }
-  await saveAbwesenheit(type, fromValue, toValue);
+
+  await saveAbwesenheit(type, from, to);
   window.alert('Gespeichert');
 }
 
