@@ -306,6 +306,49 @@ function bindQuickDocSelectionStyles(root = document) {
   });
 }
 
+const WORK_DAY_OPTIONS = ["MO", "DI", "MI", "DO", "FR"];
+
+function normalizeWorkDaysForUi(value) {
+  const allowed = new Set(WORK_DAY_OPTIONS);
+  return Array.isArray(value)
+    ? value
+        .map((item) => String(item || "").trim().toUpperCase())
+        .filter((item, index, array) => allowed.has(item) && array.indexOf(item) === index)
+    : [];
+}
+
+function normalizeWeeklyHoursInput(value) {
+  return String(value || "")
+    .trim()
+    .replace(",", ".");
+}
+
+function isValidWeeklyHours(value) {
+  if (!value) return true;
+  return /^\d+(?:\.\d+)?$/.test(value);
+}
+
+function renderWorkDayChips(selectedDays = [], idPrefix = "workday") {
+  const selected = new Set(normalizeWorkDaysForUi(selectedDays));
+  return `
+    <div class="checkbox-row">
+      ${WORK_DAY_OPTIONS.map((day) => `
+        <label class="check-chip">
+          <input id="${idPrefix}-${day}" class="workday-check" type="checkbox" value="${day}" ${selected.has(day) ? "checked" : ""}>
+          <span>${day}</span>
+        </label>
+      `).join("")}
+    </div>
+  `;
+}
+
+function getSelectedWorkDays(root = document) {
+  return WORK_DAY_OPTIONS.filter((day) => {
+    const input = root.getElementById ? root.getElementById(`setupWorkDay-${day}`) || root.getElementById(`settingsWorkDay-${day}`) : null;
+    return !!input?.checked;
+  });
+}
+
 function bindSelectableCardChecks(root = document) {
   root.querySelectorAll('.selectable-card').forEach((card) => {
     const input = card.querySelector('input[type="checkbox"]');
@@ -761,6 +804,12 @@ export function showSetupView({ onSuccess }) {
       <label for="therapistFax">Faxnummer</label>
       <input id="therapistFax" type="tel" inputmode="numeric" autocomplete="off">
 
+      <label>Arbeitstage pro Woche</label>
+      ${renderWorkDayChips([], "setupWorkDay")}
+
+      <label for="weeklyHours">Arbeitsstunden pro Woche</label>
+      <input id="weeklyHours" type="text" inputmode="decimal" autocomplete="off" placeholder="z. B. 20 oder 38.5">
+
       <label for="practicePassword">Praxispasswort</label>
       <input id="practicePassword" type="password" autocomplete="new-password">
 
@@ -776,6 +825,8 @@ export function showSetupView({ onSuccess }) {
       <div id="setupMessage"></div>
     </div>
   `);
+
+  bindCheckChipToggles(app);
 
   document.getElementById("restoreBackupBtn").onclick = () => {
     document.getElementById("restoreBackupInput").click();
@@ -800,6 +851,8 @@ export function showSetupView({ onSuccess }) {
     const practiceAddress = document.getElementById("practiceAddress").value.trim();
     const practicePhone = document.getElementById("practicePhone").value.trim();
     const therapistFax = document.getElementById("therapistFax").value.trim();
+    const workDays = WORK_DAY_OPTIONS.filter((day) => document.getElementById(`setupWorkDay-${day}`)?.checked);
+    const weeklyHours = normalizeWeeklyHoursInput(document.getElementById("weeklyHours").value);
     const password = document.getElementById("practicePassword").value;
     const pin = document.getElementById("workflowPin").value;
     const pinRepeat = document.getElementById("workflowPinRepeat").value;
@@ -807,6 +860,11 @@ export function showSetupView({ onSuccess }) {
 
     msg.className = "error";
     msg.textContent = "";
+
+    if (!isValidWeeklyHours(weeklyHours)) {
+      msg.textContent = "Die Arbeitsstunden pro Woche müssen als Zahl eingegeben werden, z. B. 20 oder 38.5.";
+      return;
+    }
 
     if (!password || password.length < 8) {
       msg.textContent = "Das Praxispasswort muss mindestens 8 Zeichen haben.";
@@ -829,6 +887,8 @@ export function showSetupView({ onSuccess }) {
       initialAppData.settings.practiceAddress = practiceAddress;
       initialAppData.settings.practicePhone = practicePhone;
       initialAppData.settings.therapistFax = therapistFax;
+      initialAppData.settings.workDays = workDays;
+      initialAppData.settings.weeklyHours = weeklyHours;
 
       const session = await setupSecurity({
         password,
@@ -973,6 +1033,12 @@ export function showSettingsView({ onLock }) {
       <label for="settingsTherapistFax">Faxnummer</label>
       <input id="settingsTherapistFax" type="tel" inputmode="numeric" autocomplete="off" value="${escapeHtml(settings.therapistFax || "")}">
 
+      <label>Arbeitstage pro Woche</label>
+      ${renderWorkDayChips(settings.workDays || [], "settingsWorkDay")}
+
+      <label for="settingsWeeklyHours">Arbeitsstunden pro Woche</label>
+      <input id="settingsWeeklyHours" type="text" inputmode="decimal" autocomplete="off" value="${escapeHtml(settings.weeklyHours || "")}" placeholder="z. B. 20 oder 38.5">
+
       <div class="muted" style="margin:12px 0 16px 0;">Das Praxispasswort ist als Master-Key fest hinterlegt und kann in der App nicht geändert werden.</div>
 
       <label for="settingsWorkflowPin">Neue Workflow-PIN</label>
@@ -986,6 +1052,8 @@ export function showSettingsView({ onLock }) {
     </div>
   `);
 
+  bindCheckChipToggles(app);
+
   document.getElementById("backDashboardFromSettingsBtn").onclick = () => {
     showDashboardView({ onLock });
   };
@@ -995,12 +1063,19 @@ export function showSettingsView({ onLock }) {
     const practiceAddress = document.getElementById("settingsPracticeAddress").value.trim();
     const practicePhone = document.getElementById("settingsPracticePhone").value.trim();
     const therapistFax = document.getElementById("settingsTherapistFax").value.trim();
+    const workDays = WORK_DAY_OPTIONS.filter((day) => document.getElementById(`settingsWorkDay-${day}`)?.checked);
+    const weeklyHours = normalizeWeeklyHoursInput(document.getElementById("settingsWeeklyHours").value);
     const newPin = document.getElementById("settingsWorkflowPin").value;
     const newPinRepeat = document.getElementById("settingsWorkflowPinRepeat").value;
     const msg = document.getElementById("settingsMessage");
 
     msg.className = "error";
     msg.textContent = "";
+
+    if (!isValidWeeklyHours(weeklyHours)) {
+      msg.textContent = "Die Arbeitsstunden pro Woche müssen als Zahl eingegeben werden, z. B. 20 oder 38.5.";
+      return;
+    }
 
     if ((newPin || newPinRepeat) && newPin !== newPinRepeat) {
       msg.textContent = "Die neue Workflow-PIN stimmt nicht überein.";
@@ -1018,6 +1093,8 @@ export function showSettingsView({ onLock }) {
         data.settings.practiceAddress = practiceAddress;
         data.settings.practicePhone = practicePhone;
         data.settings.therapistFax = therapistFax;
+        data.settings.workDays = workDays;
+        data.settings.weeklyHours = weeklyHours;
         data.settings.updatedAt = new Date().toISOString();
       });
 

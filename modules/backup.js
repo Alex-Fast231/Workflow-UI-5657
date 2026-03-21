@@ -103,6 +103,8 @@ export function buildBackupMeta(runtimeData) {
     therapistName: normalized.settings?.therapistName || "",
     therapistFax: normalized.settings?.therapistFax || "",
     practicePhone: normalized.settings?.practicePhone || "",
+    workDays: Array.isArray(normalized.settings?.workDays) ? normalized.settings.workDays : [],
+    weeklyHours: normalized.settings?.weeklyHours || "",
     counts
   };
 }
@@ -262,7 +264,9 @@ function validateBackupCompatibility({ encryptedAppData, cryptoMeta, meta }) {
       settings: {
         therapistName: meta.therapistName || "",
         practicePhone: meta.practicePhone || "",
-        therapistFax: meta.therapistFax || ""
+        therapistFax: meta.therapistFax || "",
+        workDays: Array.isArray(meta.workDays) ? meta.workDays : [],
+        weeklyHours: typeof meta.weeklyHours === "string" || typeof meta.weeklyHours === "number" ? meta.weeklyHours : ""
       },
       homes: []
     });

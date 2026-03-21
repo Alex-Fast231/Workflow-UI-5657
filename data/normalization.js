@@ -15,6 +15,22 @@ function ensureBoolean(value, fallback = false) {
 function ensureArray(value) {
   return Array.isArray(value) ? value : [];
 }
+function ensureWorkDays(value) {
+  const allowed = new Set(["MO", "DI", "MI", "DO", "FR"]);
+  return ensureArray(value)
+    .map((item) => ensureString(item).trim().toUpperCase())
+    .filter((item, index, array) => allowed.has(item) && array.indexOf(item) === index);
+}
+
+function ensureWeeklyHours(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  return "";
+}
 
 function normalizeEntry(entry) {
   const now = new Date().toISOString();
@@ -247,6 +263,8 @@ export function finalizeAppStructure(data) {
       therapistFax: ensureString(settings.therapistFax),
       practicePhone: ensureString(settings.practicePhone),
       practiceAddress: ensureString(settings.practiceAddress, PRACTICE_ADDRESS),
+      workDays: ensureWorkDays(settings.workDays),
+      weeklyHours: ensureWeeklyHours(settings.weeklyHours),
       privacyMode: ["full", "privacy"].includes(settings.privacyMode) ? settings.privacyMode : "full",
       createdAt: ensureString(settings.createdAt, now),
       updatedAt: now
