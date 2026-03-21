@@ -1,4 +1,5 @@
 import { getRuntimeData, mutateRuntimeData } from "../core/app-core.js";
+import { compareDeDates, isDateInRange } from "../core/date-utils.js";
 
 function generateId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
@@ -465,30 +466,13 @@ export function deleteKilometerTravel(travelId) {
   });
 }
 
-function parseDeDateToComparable(value) {
-  const s = String(value || '').trim();
-  const m = s.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
-  if (!m) return null;
-  return `${m[3]}-${m[2]}-${m[1]}`;
-}
-
-function isDateInRange(dateValue, fromDate, toDate) {
-  const c = parseDeDateToComparable(dateValue);
-  const f = parseDeDateToComparable(fromDate);
-  const t = parseDeDateToComparable(toDate);
-  if (!c) return false;
-  if (f && c < f) return false;
-  if (t && c > t) return false;
-  return true;
-}
-
 export function getKilometerPeriodSummary(fromDate, toDate) {
   const data = getRuntimeData();
   if (!data) throw new Error('Kein runtimeData Zustand vorhanden');
   const kilometerState = ensureKilometerState(data);
   const rows = (kilometerState.travelLog || [])
     .filter((item) => isDateInRange(item.date, fromDate, toDate))
-    .sort((a, b) => `${a.date} ${a.createdAt || ''}`.localeCompare(`${b.date} ${b.createdAt || ''}`, 'de'));
+    .sort((a, b) => compareDeDates(a?.date, b?.date) || String(a?.createdAt || '').localeCompare(String(b?.createdAt || ''), 'de'));
 
   const totalKm = rows.reduce((sum, item) => sum + (Number(item.km) || 0), 0);
   const totalAmount = totalKm * 0.3;

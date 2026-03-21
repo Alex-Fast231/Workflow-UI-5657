@@ -61,6 +61,14 @@ import {
 import { getRezeptFristInfo } from "../modules/fristen.js";
 import { exportBackup, importBackup, downloadBlob, validateBackupZip } from "../modules/backup.js";
 import { mutateRuntimeData } from "../core/app-core.js";
+import {
+  parseDeDate,
+  formatDeDate,
+  compareDeDates,
+  isDateInRange,
+  parseComparableDate,
+  listComparableDatesInRange
+} from "../core/date-utils.js";
 
 const app = document.getElementById("app");
 const lockBtn = document.getElementById("lockBtn");
@@ -85,11 +93,7 @@ function sortPatientsAlpha(patients) {
 }
 
 function sortRezepteForDisplay(rezepte) {
-  return [...(rezepte || [])].sort((a, b) => {
-    const aDate = String(a?.ausstell || "");
-    const bDate = String(b?.ausstell || "");
-    return collatorDE.compare(bDate, aDate);
-  });
+  return [...(rezepte || [])].sort((a, b) => compareDeDates(b?.ausstell, a?.ausstell));
 }
 
 function getStatusPillClass(status) {
@@ -136,69 +140,12 @@ function formatHoursClockLabel(minutes) {
   return `${h}:${String(m).padStart(2, "0")} Stunden`;
 }
 
-function normalizeDeDateInput(value) {
-  const digits = String(value || '').replace(/\D/g, '').slice(0, 8);
-  if (!digits) return '';
-  if (digits.length <= 2) return digits;
-  if (digits.length <= 4) return `${digits.slice(0, 2)}.${digits.slice(2)}`;
-  return `${digits.slice(0, 2)}.${digits.slice(2, 4)}.${digits.slice(4)}`;
-}
-
-function parseDeDateToComparable(value) {
-  const s = normalizeDeDateInput(value).trim();
-  const m = s.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
-  if (!m) return null;
-  const comparable = `${m[3]}-${m[2]}-${m[1]}`;
-  return parseComparableToDate(comparable) ? comparable : null;
-}
-
-function parseComparableToDate(value) {
-  const s = String(value || '').trim();
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return null;
-  const year = Number(m[1]);
-  const month = Number(m[2]);
-  const day = Number(m[3]);
-  const date = new Date(year, month - 1, day, 12, 0, 0, 0);
-  if (date.getFullYear() !== year || (date.getMonth() + 1) !== month || date.getDate() !== day) return null;
-  return date;
-}
-
 function formatComparableToDe(value) {
-  const date = parseComparableToDate(value);
-  if (!date) return '';
-  const dd = String(date.getDate()).padStart(2, '0');
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const yyyy = String(date.getFullYear());
-  return `${dd}.${mm}.${yyyy}`;
-}
-
-function getComparableFromDate(date) {
-  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
-  const yyyy = String(date.getFullYear());
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function listComparableDatesInRange(fromDate, toDate) {
-  const from = parseDeDateToComparable(fromDate);
-  const to = parseDeDateToComparable(toDate);
-  const start = parseComparableToDate(from);
-  const end = parseComparableToDate(to);
-  if (!start || !end || start > end) return [];
-
-  const rows = [];
-  const cursor = new Date(start.getTime());
-  while (cursor <= end) {
-    rows.push(getComparableFromDate(cursor));
-    cursor.setDate(cursor.getDate() + 1);
-  }
-  return rows;
+  return formatDeDate(value);
 }
 
 function getWorkDayCodeFromComparable(comparableDate) {
-  const date = parseComparableToDate(comparableDate);
+  const date = parseComparableDate(comparableDate);
   if (!date) return '';
   const dayMap = ['SO', 'MO', 'DI', 'MI', 'DO', 'FR', 'SA'];
   return dayMap[date.getDay()] || '';
@@ -217,24 +164,14 @@ function getAbsenceRows(data) {
 }
 
 function isComparableDateWithinAbsence(comparableDate, absence) {
-  const from = parseDeDateToComparable(absence?.from);
-  const to = parseDeDateToComparable(absence?.to);
+  const from = parseDeDate(absence?.from);
+  const to = parseDeDate(absence?.to);
   if (!from || !to || !comparableDate) return false;
   return comparableDate >= from && comparableDate <= to;
 }
 
 function getAbsenceForComparableDate(data, comparableDate) {
   return getAbsenceRows(data).find((item) => isComparableDateWithinAbsence(comparableDate, item)) || null;
-}
-
-function isDateInRange(dateValue, fromDate, toDate) {
-  const current = parseDeDateToComparable(dateValue);
-  const from = parseDeDateToComparable(fromDate);
-  const to = parseDeDateToComparable(toDate);
-  if (!current) return false;
-  if (from && current < from) return false;
-  if (to && current > to) return false;
-  return true;
 }
 
 function collectAllTimeEntries(data) {
@@ -306,15 +243,15 @@ function getTimePeriodSummary(data, fromDate, toDate) {
   const plannedMinutes = dailyRows.reduce((sum, row) => sum + row.plannedMinutes, 0);
   const saldoMinutes = totalMinutes - plannedMinutes;
   const absenceRows = getAbsenceRows(data).filter((item) => {
-    const from = parseDeDateToComparable(item?.from);
-    const to = parseDeDateToComparable(item?.to);
-    const filterFrom = parseDeDateToComparable(fromDate);
-    const filterTo = parseDeDateToComparable(toDate);
+    const from = parseDeDate(item?.from);
+    const to = parseDeDate(item?.to);
+    const filterFrom = parseDeDate(fromDate);
+    const filterTo = parseDeDate(toDate);
     if (!from || !to) return false;
     if (filterFrom && to < filterFrom) return false;
     if (filterTo && from > filterTo) return false;
     return true;
-  }).sort((a, b) => (parseDeDateToComparable(a.from) || '').localeCompare(parseDeDateToComparable(b.from) || '', 'de'));
+  }).sort((a, b) => compareDeDates(a?.from, b?.from));
 
   return {
     fromDate: String(fromDate || '').trim(),
@@ -1492,8 +1429,8 @@ export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo 
       const msg = document.getElementById("dashboardAbsenceMsg");
       const fromValue = document.getElementById("dashboardAbsenceFrom").value.trim();
       const toValue = document.getElementById("dashboardAbsenceTo").value.trim();
-      const normalizedFrom = parseDeDateToComparable(fromValue);
-      const normalizedTo = parseDeDateToComparable(toValue);
+      const normalizedFrom = parseDeDate(fromValue);
+      const normalizedTo = parseDeDate(toValue);
       msg.className = "error";
       msg.textContent = "";
 
