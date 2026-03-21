@@ -136,9 +136,23 @@ function formatHoursClockLabel(minutes) {
   return `${h}:${String(m).padStart(2, "0")} Stunden`;
 }
 
-function parseDeDateToComparable(value) {
+function normalizeDeDate(value) {
   const s = String(value || '').trim();
-  const m = s.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  const m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (!m) return null;
+  const day = String(m[1]).padStart(2, '0');
+  const month = String(m[2]).padStart(2, '0');
+  const year = m[3];
+  const comparable = `${year}-${month}-${day}`;
+  const date = new Date(`${comparable}T00:00:00`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== comparable) return null;
+  return `${day}.${month}.${year}`;
+}
+
+function parseDeDateToComparable(value) {
+  const normalized = normalizeDeDate(value);
+  if (!normalized) return null;
+  const m = normalized.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
   if (!m) return null;
   return `${m[3]}-${m[2]}-${m[1]}`;
 }
@@ -179,10 +193,7 @@ function isValidIsoDate(value) {
 }
 
 function isValidDeDate(value) {
-  const comparable = parseDeDateToComparable(value);
-  if (!comparable) return false;
-  const date = new Date(`${comparable}T00:00:00`);
-  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === comparable;
+  return !!normalizeDeDate(value);
 }
 
 function getWorkdayCodeFromComparableDate(value) {
@@ -267,10 +278,10 @@ async function openAbwesenheitDialog(type) {
   const toInput = window.prompt('Bis Datum (TT.MM.JJJJ):', '');
   if (!toInput) return;
 
-  const from = String(fromInput).trim();
-  const to = String(toInput).trim();
+  const from = normalizeDeDate(fromInput);
+  const to = normalizeDeDate(toInput);
 
-  if (!isValidDeDate(from) || !isValidDeDate(to)) {
+  if (!from || !to) {
     window.alert('Bitte Datum im Format TT.MM.JJJJ eingeben.');
     return;
   }
