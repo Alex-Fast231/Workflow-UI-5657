@@ -1,4 +1,5 @@
 import { createEmptyAppData, APP_SCHEMA_VERSION, APP_VERSION, APP_MODULE, PRACTICE_ADDRESS } from "./schema.js";
+import { formatDeDate, parseDeDate } from "../core/date-utils.js";
 
 function generateId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
@@ -22,6 +23,29 @@ function ensureWorkDays(value) {
     .filter((item, index, array) => allowed.has(item) && array.indexOf(item) === index);
 }
 
+
+function ensureDeDateString(value) {
+  const normalized = formatDeDate(value);
+  return parseDeDate(normalized) ? normalized : "";
+}
+
+function ensureIsoString(value, fallback = "") {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString();
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return fallback;
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  }
+
+  return fallback;
+}
+
 function ensureWeeklyHours(value) {
   if (typeof value === "number" && Number.isFinite(value)) {
     return String(value);
@@ -38,10 +62,10 @@ function normalizeEntry(entry) {
 
   return {
     entryId: ensureString(item.entryId) || generateId("entry"),
-    date: ensureString(item.date),
+    date: ensureDeDateString(item.date),
     text: ensureString(item.text),
-    createdAt: ensureString(item.createdAt, now),
-    updatedAt: ensureString(item.updatedAt, now),
+    createdAt: ensureIsoString(item.createdAt, now),
+    updatedAt: ensureIsoString(item.updatedAt, now),
     linkedTimeEntryId: ensureString(item.linkedTimeEntryId),
     autoTimeMinutes: Number.isFinite(Number(item.autoTimeMinutes)) ? Number(item.autoTimeMinutes) : 0
   };
@@ -61,13 +85,13 @@ function normalizeItem(item) {
 
 function getRezeptAusstellungsdatum(source) {
   const item = source && typeof source === "object" ? source : {};
-  return ensureString(
+  return ensureDeDateString(
     item.ausstell
     || item.ausstellungsdatum
     || item.issueDate
     || item.datum
     || item.verordnungsdatum
-  ).trim();
+  );
 }
 
 function normalizeRezept(rezept) {
@@ -121,7 +145,7 @@ return {
     const entry = item && typeof item === "object" ? item : {};
     return {
       timeEntryId: ensureString(entry.timeEntryId) || generateId("time"),
-      date: ensureString(entry.date),
+      date: ensureDeDateString(entry.date),
       minutes: Number.isFinite(Number(entry.minutes)) ? Number(entry.minutes) : 0,
       type: ["behandlung", "dokumentation", "besprechung", "manuell"].includes(ensureString(entry.type))
         ? ensureString(entry.type)
@@ -129,8 +153,8 @@ return {
       note: ensureString(entry.note),
       sourceEntryId: ensureString(entry.sourceEntryId),
       confirmed: ensureBoolean(entry.confirmed, true),
-      createdAt: ensureString(entry.createdAt, now),
-      updatedAt: ensureString(entry.updatedAt, now)
+      createdAt: ensureIsoString(entry.createdAt, now),
+      updatedAt: ensureIsoString(entry.updatedAt, now)
     };
   })
 };
@@ -143,7 +167,7 @@ function normalizePatient(patient) {
     patientId: ensureString(source.patientId || source.id) || generateId("patient"),
     firstName: ensureString(source.firstName),
     lastName: ensureString(source.lastName),
-    birthDate: ensureString(source.birthDate),
+    birthDate: ensureDeDateString(source.birthDate),
     befreit: ensureBoolean(source.befreit, false),
     hb: ensureBoolean(source.hb, false),
     verstorben: ensureBoolean(source.verstorben, false),
@@ -169,13 +193,13 @@ function normalizeAbgabeHistory(items) {
     const source = item && typeof item === "object" ? item : {};
     return {
       id: ensureString(source.id) || generateId("abgabe"),
-      createdAt: ensureString(source.createdAt),
+      createdAt: ensureIsoString(source.createdAt),
       title: ensureString(source.title),
       rows: ensureArray(source.rows).map((row) => ({
         heim: ensureString(row?.heim),
         patient: ensureString(row?.patient),
-        geb: ensureString(row?.geb),
-        ausstell: ensureString(row?.ausstell),
+        geb: ensureDeDateString(row?.geb),
+        ausstell: ensureDeDateString(row?.ausstell),
         leistung: ensureString(row?.leistung),
         anzahl: ensureString(row?.anzahl),
         menge: ensureString(row?.menge)
@@ -199,12 +223,12 @@ function normalizeKilometerState(state) {
       fromLabel: ensureString(item?.fromLabel),
       toLabel: ensureString(item?.toLabel),
       km: Number.isFinite(Number(item?.km)) ? Number(item.km) : 0,
-      createdAt: ensureString(item?.createdAt, new Date().toISOString()),
-      updatedAt: ensureString(item?.updatedAt, new Date().toISOString())
+      createdAt: ensureIsoString(item?.createdAt, new Date().toISOString()),
+      updatedAt: ensureIsoString(item?.updatedAt, new Date().toISOString())
     })),
     travelLog: ensureArray(source.travelLog).map((item) => ({
       travelId: ensureString(item?.travelId) || generateId("travel"),
-      date: ensureString(item?.date),
+      date: ensureDeDateString(item?.date),
       fromPointId: ensureString(item?.fromPointId),
       toPointId: ensureString(item?.toPointId),
       fromLabel: ensureString(item?.fromLabel),
@@ -213,8 +237,8 @@ function normalizeKilometerState(state) {
       source: ensureString(item?.source, "auto") || "auto",
       relatedEntryId: ensureString(item?.relatedEntryId),
       note: ensureString(item?.note),
-      createdAt: ensureString(item?.createdAt, new Date().toISOString()),
-      updatedAt: ensureString(item?.updatedAt),
+      createdAt: ensureIsoString(item?.createdAt, new Date().toISOString()),
+      updatedAt: ensureIsoString(item?.updatedAt),
       manualAdjusted: Boolean(item?.manualAdjusted)
     }))
   };
@@ -228,10 +252,10 @@ function normalizeAbwesenheiten(items) {
     return {
       id: ensureString(source.id) || generateId("abwesenheit"),
       type,
-      from: ensureString(source.from || source.von),
-      to: ensureString(source.to || source.bis),
-      createdAt: ensureString(source.createdAt, new Date().toISOString()),
-      updatedAt: ensureString(source.updatedAt, new Date().toISOString())
+      from: ensureDeDateString(source.from || source.von),
+      to: ensureDeDateString(source.to || source.bis),
+      createdAt: ensureIsoString(source.createdAt, new Date().toISOString()),
+      updatedAt: ensureIsoString(source.updatedAt, new Date().toISOString())
     };
   });
 }
@@ -241,7 +265,7 @@ function normalizeNachbestellHistory(items) {
     const source = item && typeof item === "object" ? item : {};
     return {
       id: ensureString(source.id) || generateId("nachbestellung"),
-      createdAt: ensureString(source.createdAt),
+      createdAt: ensureIsoString(source.createdAt),
       title: ensureString(source.title),
       doctor: ensureString(source.doctor),
       rezeptCount: Number.isFinite(Number(source.rezeptCount)) ? Number(source.rezeptCount) : 0,
@@ -249,7 +273,7 @@ function normalizeNachbestellHistory(items) {
       snapshotHtml: ensureString(source.snapshotHtml),
       lines: ensureArray(source.lines).map((line) => ({
         patient: ensureString(line?.patient),
-        geb: ensureString(line?.geb),
+        geb: ensureDeDateString(line?.geb),
         heim: ensureString(line?.heim),
         text: ensureString(line?.text)
       }))
@@ -272,7 +296,7 @@ export function finalizeAppStructure(data) {
     appVersion: APP_VERSION,
     module: APP_MODULE,
     viewerCompatible: true,
-    exportTimestamp: ensureString(source.exportTimestamp),
+    exportTimestamp: ensureIsoString(source.exportTimestamp),
 
     settings: {
       therapistName: ensureString(settings.therapistName),
@@ -282,8 +306,8 @@ export function finalizeAppStructure(data) {
       workDays: ensureWorkDays(settings.workDays),
       weeklyHours: ensureWeeklyHours(settings.weeklyHours),
       privacyMode: ["full", "privacy"].includes(settings.privacyMode) ? settings.privacyMode : "full",
-      createdAt: ensureString(settings.createdAt, now),
-      updatedAt: now
+      createdAt: ensureIsoString(settings.createdAt, now),
+      updatedAt: ensureIsoString(settings.updatedAt, now) || now
     },
 
     homes: ensureArray(source.homes).map(normalizeHome),
@@ -311,14 +335,14 @@ export function finalizeAppStructure(data) {
 
     security: {
       log: ensureArray(source.security?.log),
-      lastSecurityChangeAt: ensureString(source.security?.lastSecurityChangeAt),
+      lastSecurityChangeAt: ensureIsoString(source.security?.lastSecurityChangeAt),
       privacyMode: ["full", "privacy"].includes(source.security?.privacyMode)
         ? source.security.privacyMode
         : (["full", "privacy"].includes(settings.privacyMode) ? settings.privacyMode : "full")
     },
 
     ui: {
-      lastBackupAt: ensureString(source.ui?.lastBackupAt)
+      lastBackupAt: ensureIsoString(source.ui?.lastBackupAt)
     }
   };
 

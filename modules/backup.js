@@ -81,6 +81,19 @@ function generateMigrationId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+
+function ensureArrayField(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function ensureStringField(value, fallback = "") {
+  return typeof value === "string" ? value : fallback;
+}
+
+function ensureSchemaVersion(value, fallback = 1) {
+  return Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : fallback;
+}
+
 function normalizeLegacyDateValue(value) {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     const dd = String(value.getDate()).padStart(2, "0");
@@ -330,26 +343,26 @@ export function migrateBackupData(data, fromVersion) {
   if (typeof source.cipherBase64 === "string" && typeof source.ivBase64 === "string") {
     return {
       ...source,
-      schemaVersion: Number.isFinite(Number(source.schemaVersion)) ? Number(source.schemaVersion) : version
+      schemaVersion: ensureSchemaVersion(source.schemaVersion, version)
     };
   }
 
   if (typeof source.passwordSaltBase64 === "string" || typeof source.pinSaltBase64 === "string") {
     return {
       ...source,
-      schemaVersion: Number.isFinite(Number(source.schemaVersion)) ? Number(source.schemaVersion) : version
+      schemaVersion: ensureSchemaVersion(source.schemaVersion, version)
     };
   }
 
   if (source.type === "fast-doku-backup" || Object.prototype.hasOwnProperty.call(source, "viewerCompatible")) {
     return {
       ...source,
-      schemaVersion: Number.isFinite(Number(source.schemaVersion)) ? Number(source.schemaVersion) : version,
-      therapistName: ensureStringValue(source.therapistName),
-      therapistFax: ensureStringValue(source.therapistFax),
-      practicePhone: ensureStringValue(source.practicePhone),
-      workDays: ensureArrayValue(source.workDays),
-      weeklyHours: typeof source.weeklyHours === "number" ? String(source.weeklyHours) : ensureStringValue(source.weeklyHours)
+      schemaVersion: ensureSchemaVersion(source.schemaVersion, version),
+      therapistName: ensureStringField(source.therapistName),
+      therapistFax: ensureStringField(source.therapistFax),
+      practicePhone: ensureStringField(source.practicePhone),
+      workDays: ensureArrayField(source.workDays),
+      weeklyHours: typeof source.weeklyHours === "number" ? String(source.weeklyHours) : ensureStringField(source.weeklyHours)
     };
   }
 
@@ -659,7 +672,7 @@ export async function validateBackupZip(file, practicePassword) {
 
 export async function importBackup(file, practicePassword) {
   const payload = await validateBackupZip(file, practicePassword);
-  const backupSchemaVersion = Number(payload.meta?.schemaVersion ?? 0);
+  const backupSchemaVersion = ensureSchemaVersion(payload.meta?.schemaVersion, 1);
   const migratedEncryptedAppData = migrateBackupData(payload.encryptedAppData, backupSchemaVersion);
   const migratedCryptoMeta = migrateBackupData(payload.cryptoMeta, backupSchemaVersion);
   const securityState = resetImportedSecurityState();
