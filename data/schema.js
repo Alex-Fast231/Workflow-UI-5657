@@ -53,9 +53,10 @@ export function createEmptyAppData() {
       travelLog: []
     },
 
+    abwesenheiten: [],
+
     abgabeHistory: [],
     nachbestellHistory: [],
-    abwesenheiten: [],
 
     security: {
       log: [],

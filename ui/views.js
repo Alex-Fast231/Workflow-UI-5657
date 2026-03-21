@@ -136,25 +136,95 @@ function formatHoursClockLabel(minutes) {
   return `${h}:${String(m).padStart(2, "0")} Stunden`;
 }
 
-function normalizeDeDate(value) {
-  const s = String(value || '').trim();
-  const m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
-  if (!m) return null;
-  const day = String(m[1]).padStart(2, '0');
-  const month = String(m[2]).padStart(2, '0');
-  const year = m[3];
-  const comparable = `${year}-${month}-${day}`;
-  const date = new Date(`${comparable}T00:00:00`);
-  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== comparable) return null;
-  return `${day}.${month}.${year}`;
+function normalizeDeDateInput(value) {
+  const digits = String(value || '').replace(/\D/g, '').slice(0, 8);
+  if (!digits) return '';
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}.${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}.${digits.slice(2, 4)}.${digits.slice(4)}`;
 }
 
 function parseDeDateToComparable(value) {
-  const normalized = normalizeDeDate(value);
-  if (!normalized) return null;
-  const m = normalized.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  const s = normalizeDeDateInput(value).trim();
+  const m = s.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
   if (!m) return null;
-  return `${m[3]}-${m[2]}-${m[1]}`;
+  const comparable = `${m[3]}-${m[2]}-${m[1]}`;
+  return parseComparableToDate(comparable) ? comparable : null;
+}
+
+function parseComparableToDate(value) {
+  const s = String(value || '').trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  const date = new Date(year, month - 1, day, 12, 0, 0, 0);
+  if (date.getFullYear() !== year || (date.getMonth() + 1) !== month || date.getDate() !== day) return null;
+  return date;
+}
+
+function formatComparableToDe(value) {
+  const date = parseComparableToDate(value);
+  if (!date) return '';
+  const dd = String(date.getDate()).padStart(2, '0');
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const yyyy = String(date.getFullYear());
+  return `${dd}.${mm}.${yyyy}`;
+}
+
+function getComparableFromDate(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
+  const yyyy = String(date.getFullYear());
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function listComparableDatesInRange(fromDate, toDate) {
+  const from = parseDeDateToComparable(fromDate);
+  const to = parseDeDateToComparable(toDate);
+  const start = parseComparableToDate(from);
+  const end = parseComparableToDate(to);
+  if (!start || !end || start > end) return [];
+
+  const rows = [];
+  const cursor = new Date(start.getTime());
+  while (cursor <= end) {
+    rows.push(getComparableFromDate(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return rows;
+}
+
+function getWorkDayCodeFromComparable(comparableDate) {
+  const date = parseComparableToDate(comparableDate);
+  if (!date) return '';
+  const dayMap = ['SO', 'MO', 'DI', 'MI', 'DO', 'FR', 'SA'];
+  return dayMap[date.getDay()] || '';
+}
+
+function getDailyPlannedMinutes(settings) {
+  const workDays = Array.isArray(settings?.workDays) ? settings.workDays.filter(Boolean) : [];
+  const weeklyHoursValue = String(settings?.weeklyHours || '').replace(',', '.').trim();
+  const weeklyHours = Number(weeklyHoursValue);
+  if (!workDays.length || !Number.isFinite(weeklyHours) || weeklyHours <= 0) return 0;
+  return Math.round((weeklyHours * 60) / workDays.length);
+}
+
+function getAbsenceRows(data) {
+  return Array.isArray(data?.abwesenheiten) ? data.abwesenheiten : [];
+}
+
+function isComparableDateWithinAbsence(comparableDate, absence) {
+  const from = parseDeDateToComparable(absence?.from);
+  const to = parseDeDateToComparable(absence?.to);
+  if (!from || !to || !comparableDate) return false;
+  return comparableDate >= from && comparableDate <= to;
+}
+
+function getAbsenceForComparableDate(data, comparableDate) {
+  return getAbsenceRows(data).find((item) => isComparableDateWithinAbsence(comparableDate, item)) || null;
 }
 
 function isDateInRange(dateValue, fromDate, toDate) {
@@ -165,136 +235,6 @@ function isDateInRange(dateValue, fromDate, toDate) {
   if (from && current < from) return false;
   if (to && current > to) return false;
   return true;
-}
-
-function parseIsoDateToComparable(value) {
-  const s = String(value || '').trim();
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return null;
-  return `${m[1]}-${m[2]}-${m[3]}`;
-}
-
-function toComparableDate(value) {
-  return parseDeDateToComparable(value) || parseIsoDateToComparable(value);
-}
-
-function comparableToDeDate(value) {
-  const s = String(value || '').trim();
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return '';
-  return `${m[3]}.${m[2]}.${m[1]}`;
-}
-
-function isValidIsoDate(value) {
-  const comparable = parseIsoDateToComparable(value);
-  if (!comparable) return false;
-  const date = new Date(`${comparable}T00:00:00`);
-  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === comparable;
-}
-
-function isValidDeDate(value) {
-  return !!normalizeDeDate(value);
-}
-
-function getWorkdayCodeFromComparableDate(value) {
-  const comparable = toComparableDate(value);
-  if (!comparable) return '';
-  const date = new Date(`${comparable}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return '';
-  return ['SO', 'MO', 'DI', 'MI', 'DO', 'FR', 'SA'][date.getDay()] || '';
-}
-
-function getAbwesenheiten(data) {
-  return Array.isArray(data?.abwesenheiten) ? data.abwesenheiten : [];
-}
-
-function isAbwesenheitDate(data, dateValue) {
-  const current = toComparableDate(dateValue);
-  if (!current) return false;
-  return getAbwesenheiten(data).some((item) => {
-    const from = toComparableDate(item?.from);
-    const to = toComparableDate(item?.to);
-    if (!from || !to) return false;
-    return current >= from && current <= to;
-  });
-}
-
-function getTimeSummaryRange(rows, fromDate, toDate) {
-  const explicitFrom = parseDeDateToComparable(fromDate);
-  const explicitTo = parseDeDateToComparable(toDate);
-  const comparableDates = rows
-    .map((row) => toComparableDate(row?.date))
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b, 'de'));
-
-  const fallbackFrom = comparableDates[0] || '';
-  const fallbackTo = comparableDates[comparableDates.length - 1] || fallbackFrom || '';
-
-  const rangeFrom = explicitFrom || fallbackFrom;
-  const rangeTo = explicitTo || fallbackTo;
-
-  if (!rangeFrom || !rangeTo || rangeFrom > rangeTo) {
-    return { rangeFrom: '', rangeTo: '' };
-  }
-
-  return { rangeFrom, rangeTo };
-}
-
-function getDailyTargetMinutes(data) {
-  const workDays = Array.isArray(data?.settings?.workDays) ? data.settings.workDays.filter(Boolean) : [];
-  const weeklyHoursRaw = String(data?.settings?.weeklyHours || '').replace(',', '.').trim();
-  const weeklyHours = Number(weeklyHoursRaw);
-  if (!workDays.length || !Number.isFinite(weeklyHours) || weeklyHours <= 0) return 0;
-  return (weeklyHours * 60) / workDays.length;
-}
-
-function formatHoursDecimalLabel(hours) {
-  const value = Number(hours) || 0;
-  const prefix = value > 0 ? '+' : '';
-  return `${prefix}${value.toFixed(2)} h`;
-}
-
-async function saveAbwesenheit(type, from, to) {
-  mutateRuntimeData((data) => {
-    if (!Array.isArray(data.abwesenheiten)) {
-      data.abwesenheiten = [];
-    }
-    const now = new Date().toISOString();
-    data.abwesenheiten.push({
-      id: `absence_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      type,
-      from,
-      to,
-      createdAt: now,
-      updatedAt: now
-    });
-  });
-  await queuePersistRuntimeData();
-}
-
-async function openAbwesenheitDialog(type) {
-  const fromInput = window.prompt('Von Datum (TT.MM.JJJJ):', '');
-  if (!fromInput) return;
-  const toInput = window.prompt('Bis Datum (TT.MM.JJJJ):', '');
-  if (!toInput) return;
-
-  const from = normalizeDeDate(fromInput);
-  const to = normalizeDeDate(toInput);
-
-  if (!from || !to) {
-    window.alert('Bitte Datum im Format TT.MM.JJJJ eingeben.');
-    return;
-  }
-
-  const fromComparable = parseDeDateToComparable(from);
-  const toComparable = parseDeDateToComparable(to);
-  if (!fromComparable || !toComparable || toComparable < fromComparable) {
-    window.alert('Bis-Datum darf nicht vor Von-Datum liegen');
-    return;
-  }
-
-  await saveAbwesenheit(type, from, to);
-  window.alert('Gespeichert');
 }
 
 function collectAllTimeEntries(data) {
@@ -331,54 +271,59 @@ function getTotalTrackedMinutes(data, targetDate = "") {
 }
 
 function getTimePeriodSummary(data, fromDate, toDate) {
-  const allRows = collectAllTimeEntries(data);
-  const filteredRows = allRows.filter((entry) => isDateInRange(entry.date, fromDate, toDate));
-  const rows = filteredRows.filter((entry) => !isAbwesenheitDate(data, entry.date));
+  const rows = collectAllTimeEntries(data)
+    .filter((entry) => isDateInRange(entry.date, fromDate, toDate));
 
   const totalsByDate = new Map();
   rows.forEach((entry) => {
     totalsByDate.set(entry.date, (totalsByDate.get(entry.date) || 0) + entry.minutes);
   });
 
-  const dailyRows = Array.from(totalsByDate.entries())
-    .map(([date, totalMinutes]) => ({ date, totalMinutes }))
-    .sort((a, b) => {
-      const ad = toComparableDate(a.date) || '';
-      const bd = toComparableDate(b.date) || '';
-      return ad.localeCompare(bd, 'de');
-    });
+  const periodDates = listComparableDatesInRange(fromDate, toDate);
+  const workDays = Array.isArray(data?.settings?.workDays) ? data.settings.workDays : [];
+  const dailyPlannedMinutes = getDailyPlannedMinutes(data?.settings);
+
+  const dailyRows = periodDates.map((comparableDate) => {
+    const date = formatComparableToDe(comparableDate);
+    const totalMinutes = Number(totalsByDate.get(date) || 0);
+    const workDayCode = getWorkDayCodeFromComparable(comparableDate);
+    const isWorkDay = workDays.includes(workDayCode);
+    const absence = isWorkDay ? getAbsenceForComparableDate(data, comparableDate) : null;
+    const plannedMinutes = isWorkDay && !absence ? dailyPlannedMinutes : 0;
+    const saldoMinutes = totalMinutes - plannedMinutes;
+
+    return {
+      date,
+      totalMinutes,
+      plannedMinutes,
+      saldoMinutes,
+      isWorkDay,
+      absenceType: absence?.type || ''
+    };
+  }).filter((row) => row.totalMinutes > 0 || row.plannedMinutes > 0 || row.absenceType);
 
   const totalMinutes = dailyRows.reduce((sum, row) => sum + row.totalMinutes, 0);
-  const { rangeFrom, rangeTo } = getTimeSummaryRange(filteredRows, fromDate, toDate);
-  const workDays = Array.isArray(data?.settings?.workDays) ? data.settings.workDays : [];
-  const dailyTargetMinutes = getDailyTargetMinutes(data);
-  let sollMinutes = 0;
-
-  if (rangeFrom && rangeTo && dailyTargetMinutes > 0 && workDays.length) {
-    const cursor = new Date(`${rangeFrom}T00:00:00`);
-    const end = new Date(`${rangeTo}T00:00:00`);
-    while (cursor.getTime() <= end.getTime()) {
-      const comparable = cursor.toISOString().slice(0, 10);
-      const workDayCode = getWorkdayCodeFromComparableDate(comparable);
-      if (workDays.includes(workDayCode) && !isAbwesenheitDate(data, comparable)) {
-        sollMinutes += dailyTargetMinutes;
-      }
-      cursor.setDate(cursor.getDate() + 1);
-    }
-  }
-
-  const saldoMinutes = totalMinutes - sollMinutes;
+  const plannedMinutes = dailyRows.reduce((sum, row) => sum + row.plannedMinutes, 0);
+  const saldoMinutes = totalMinutes - plannedMinutes;
+  const absenceRows = getAbsenceRows(data).filter((item) => {
+    const from = parseDeDateToComparable(item?.from);
+    const to = parseDeDateToComparable(item?.to);
+    const filterFrom = parseDeDateToComparable(fromDate);
+    const filterTo = parseDeDateToComparable(toDate);
+    if (!from || !to) return false;
+    if (filterFrom && to < filterFrom) return false;
+    if (filterTo && from > filterTo) return false;
+    return true;
+  }).sort((a, b) => (parseDeDateToComparable(a.from) || '').localeCompare(parseDeDateToComparable(b.from) || '', 'de'));
 
   return {
-    fromDate: String(fromDate || '').trim() || comparableToDeDate(rangeFrom),
-    toDate: String(toDate || '').trim() || comparableToDeDate(rangeTo),
+    fromDate: String(fromDate || '').trim(),
+    toDate: String(toDate || '').trim(),
     totalMinutes,
-    sollMinutes,
+    plannedMinutes,
     saldoMinutes,
-    totalHours: totalMinutes / 60,
-    sollHours: sollMinutes / 60,
-    saldoHours: saldoMinutes / 60,
-    dailyRows
+    dailyRows,
+    absenceRows
   };
 }
 
@@ -599,14 +544,17 @@ function getKnownDoctorNames(data) {
 }
 
 function bindDateAutoFormat(input) {
-  if (!input) return;
+  if (!input || input.dataset.dateAutoBound === '1') return;
+  input.dataset.dateAutoBound = '1';
   input.setAttribute("inputmode", "numeric");
+  input.setAttribute("autocomplete", "off");
+  input.setAttribute("maxlength", "10");
+  input.setAttribute("placeholder", input.getAttribute("placeholder") || "TT.MM.JJJJ");
   input.addEventListener("input", () => {
-    const digits = input.value.replace(/\D/g, "").slice(0, 8);
-    let formatted = digits;
-    if (digits.length > 2) formatted = `${digits.slice(0, 2)}.${digits.slice(2)}`;
-    if (digits.length > 4) formatted = `${digits.slice(0, 2)}.${digits.slice(2, 4)}.${digits.slice(4)}`;
-    input.value = formatted;
+    input.value = normalizeDeDateInput(input.value);
+  });
+  input.addEventListener("blur", () => {
+    input.value = normalizeDeDateInput(input.value);
   });
 }
 
@@ -1289,7 +1237,7 @@ export function showSettingsView({ onLock }) {
   };
 }
 
-export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo = "", showTimeOverview = false } = {}) {
+export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo = "", showTimeOverview = false, showAbsenceForm = "" } = {}) {
   bindLockButton(onLock);
   setCurrentView("dashboard");
 
@@ -1302,6 +1250,7 @@ export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo 
   const timePeriodSummary = getTimePeriodSummary(runtimeData, timeSummaryFrom, timeSummaryTo);
   const hasTimeSummaryFilter = Boolean(String(timeSummaryFrom || '').trim() || String(timeSummaryTo || '').trim());
   const dashboardTodayPatients = getDashboardTodayPatients(runtimeData, todayDate);
+  const absenceRows = timePeriodSummary.absenceRows;
 
   render(`
     ${renderDashboardHeaderCard({ therapistName })}
@@ -1323,33 +1272,61 @@ export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo 
         <div id="dashboardTimeOverviewPanel" class="compact-card" style="margin-top:10px; display:${showTimeOverview || hasTimeSummaryFilter ? 'block' : 'none'};">
           <div style="font-weight:700; margin-bottom:10px;">Zeitübersicht</div>
           <label for="dashboardTimeSummaryFrom">Von</label>
-          <input id="dashboardTimeSummaryFrom" type="text" value="${escapeHtml(timeSummaryFrom)}" placeholder="DD.MM.YYYY" inputmode="numeric">
+          <input id="dashboardTimeSummaryFrom" type="text" value="${escapeHtml(timeSummaryFrom)}" placeholder="TT.MM.JJJJ" inputmode="numeric">
 
           <label for="dashboardTimeSummaryTo">Bis</label>
-          <input id="dashboardTimeSummaryTo" type="text" value="${escapeHtml(timeSummaryTo)}" placeholder="DD.MM.YYYY" inputmode="numeric">
+          <input id="dashboardTimeSummaryTo" type="text" value="${escapeHtml(timeSummaryTo)}" placeholder="TT.MM.JJJJ" inputmode="numeric">
 
           <div class="row">
             <button id="runDashboardTimeSummaryBtn">Auswertung anzeigen</button>
+            <button id="openUrlaubBtn" class="secondary">Urlaub</button>
+            <button id="openKrankBtn" class="secondary">Krank</button>
           </div>
 
-          <div class="abwesenheit-buttons" style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap;">
-            <button id="dashboardUrlaubBtn" type="button" class="secondary">Urlaub</button>
-            <button id="dashboardKrankBtn" type="button" class="secondary">Krank</button>
+          <div id="dashboardAbsenceFormPanel" class="compact-card" style="margin:12px 0 0 0; padding:10px; display:${showAbsenceForm ? 'block' : 'none'};">
+            <div style="font-weight:600; margin-bottom:10px;">${showAbsenceForm === 'krank' ? 'Krank eintragen' : 'Urlaub eintragen'}</div>
+            <label for="dashboardAbsenceFrom">Von</label>
+            <input id="dashboardAbsenceFrom" type="text" placeholder="TT.MM.JJJJ" inputmode="numeric">
+
+            <label for="dashboardAbsenceTo">Bis</label>
+            <input id="dashboardAbsenceTo" type="text" placeholder="TT.MM.JJJJ" inputmode="numeric">
+
+            <div class="row">
+              <button id="saveDashboardAbsenceBtn">Speichern</button>
+              <button id="cancelDashboardAbsenceBtn" class="secondary">Abbrechen</button>
+            </div>
+            <div id="dashboardAbsenceMsg"></div>
           </div>
 
           <div class="compact-card" style="margin:12px 0 0 0; padding:10px;">
-            <div style="font-weight:600;">Iststunden</div>
-            <div class="compact-meta">${escapeHtml(formatHoursClockLabel(timePeriodSummary.totalMinutes))}</div>
-            <div class="compact-meta">Sollstunden: ${escapeHtml(formatHoursClockLabel(timePeriodSummary.sollMinutes))}</div>
+            <div style="font-weight:600;">Zeitsaldo</div>
+            <div class="compact-meta">Geleistete Zeit: ${escapeHtml(formatHoursClockLabel(timePeriodSummary.totalMinutes))}</div>
+            <div class="compact-meta">Sollzeit: ${escapeHtml(formatHoursClockLabel(timePeriodSummary.plannedMinutes))}</div>
+            <div class="compact-meta">Saldo: ${escapeHtml(formatHoursClockLabel(Math.abs(timePeriodSummary.saldoMinutes)))} ${timePeriodSummary.saldoMinutes > 0 ? 'Plus' : timePeriodSummary.saldoMinutes < 0 ? 'Minus' : 'Ausgeglichen'}</div>
             <div class="compact-meta">Zeitraum: ${escapeHtml(timePeriodSummary.fromDate || '—')} bis ${escapeHtml(timePeriodSummary.toDate || '—')}</div>
-            <div class="saldo" style="margin-top:8px; font-weight:600;">Saldo: <strong id="saldoAnzeige">${escapeHtml(formatHoursDecimalLabel(timePeriodSummary.saldoHours))}</strong></div>
+          </div>
+
+          <div class="compact-card" style="margin:12px 0 0 0; padding:10px;">
+            <div style="font-weight:600; margin-bottom:8px;">Urlaub / Krank</div>
+            ${absenceRows.length === 0 ? `<p class="muted" style="margin:0;">Noch keine Einträge vorhanden.</p>` : absenceRows.map((item) => `
+              <div class="compact-card" style="margin:0 0 8px 0; padding:10px;">
+                <div style="font-weight:600;">${escapeHtml(item.type === 'krank' ? 'Krank' : 'Urlaub')}</div>
+                <div class="compact-meta">${escapeHtml(item.from || '—')} bis ${escapeHtml(item.to || '—')}</div>
+                <div class="row" style="margin-top:8px;">
+                  <button class="secondary delete-absence-btn" data-absence-id="${escapeHtml(item.id)}">Löschen</button>
+                </div>
+              </div>
+            `).join("")}
           </div>
 
           <div style="margin-top:10px;" class="list-stack">
             ${timePeriodSummary.dailyRows.length === 0 ? `<p class="muted">Keine Zeiten im gewählten Zeitraum.</p>` : timePeriodSummary.dailyRows.map((row) => `
               <div class="compact-card" style="margin:0; padding:10px;">
                 <div style="font-weight:600;">${escapeHtml(row.date || 'Ohne Datum')}</div>
-                <div class="compact-meta">${escapeHtml(formatHoursClockLabel(row.totalMinutes))}</div>
+                <div class="compact-meta">Geleistet: ${escapeHtml(formatHoursClockLabel(row.totalMinutes))}</div>
+                <div class="compact-meta">Soll: ${escapeHtml(formatHoursClockLabel(row.plannedMinutes))}</div>
+                <div class="compact-meta">Saldo: ${escapeHtml(formatHoursClockLabel(Math.abs(row.saldoMinutes)))} ${row.saldoMinutes > 0 ? 'Plus' : row.saldoMinutes < 0 ? 'Minus' : 'Ausgeglichen'}</div>
+                ${row.absenceType ? `<div class="compact-meta">${escapeHtml(row.absenceType === 'krank' ? 'Krank' : 'Urlaub')} · neutral</div>` : ''}
               </div>
             `).join("")}
           </div>
@@ -1382,7 +1359,7 @@ export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo 
                 </select>
 
                 <label for="dashboardTimeDate">Datum</label>
-                <input id="dashboardTimeDate" type="text" placeholder="DD.MM.YYYY" inputmode="numeric">
+                <input id="dashboardTimeDate" type="text" placeholder="TT.MM.JJJJ" inputmode="numeric">
 
                 <label for="dashboardTimeMinutes">Minuten</label>
                 <input id="dashboardTimeMinutes" type="number" min="1" step="1" placeholder="z.B. 60 oder 120" inputmode="numeric">
@@ -1457,8 +1434,12 @@ export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo 
 
   const dashboardTimeSummaryFrom = document.getElementById("dashboardTimeSummaryFrom");
   const dashboardTimeSummaryTo = document.getElementById("dashboardTimeSummaryTo");
+  const dashboardAbsenceFrom = document.getElementById("dashboardAbsenceFrom");
+  const dashboardAbsenceTo = document.getElementById("dashboardAbsenceTo");
   if (dashboardTimeSummaryFrom) bindDateAutoFormat(dashboardTimeSummaryFrom);
   if (dashboardTimeSummaryTo) bindDateAutoFormat(dashboardTimeSummaryTo);
+  if (dashboardAbsenceFrom) bindDateAutoFormat(dashboardAbsenceFrom);
+  if (dashboardAbsenceTo) bindDateAutoFormat(dashboardAbsenceTo);
 
   const toggleDashboardTimeOverviewBtn = document.getElementById("toggleDashboardTimeOverviewBtn");
   if (toggleDashboardTimeOverviewBtn) {
@@ -1478,41 +1459,87 @@ export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo 
     };
   }
 
-  const dashboardUrlaubBtn = document.getElementById("dashboardUrlaubBtn");
-  if (dashboardUrlaubBtn) {
-    dashboardUrlaubBtn.onclick = async () => {
+  const openUrlaubBtn = document.getElementById("openUrlaubBtn");
+  if (openUrlaubBtn) {
+    openUrlaubBtn.onclick = () => {
+      const fromValue = document.getElementById("dashboardTimeSummaryFrom").value.trim();
+      const toValue = document.getElementById("dashboardTimeSummaryTo").value.trim();
+      showDashboardView({ onLock, timeSummaryFrom: fromValue, timeSummaryTo: toValue, showTimeOverview: true, showAbsenceForm: "urlaub" });
+    };
+  }
+
+  const openKrankBtn = document.getElementById("openKrankBtn");
+  if (openKrankBtn) {
+    openKrankBtn.onclick = () => {
+      const fromValue = document.getElementById("dashboardTimeSummaryFrom").value.trim();
+      const toValue = document.getElementById("dashboardTimeSummaryTo").value.trim();
+      showDashboardView({ onLock, timeSummaryFrom: fromValue, timeSummaryTo: toValue, showTimeOverview: true, showAbsenceForm: "krank" });
+    };
+  }
+
+  const cancelDashboardAbsenceBtn = document.getElementById("cancelDashboardAbsenceBtn");
+  if (cancelDashboardAbsenceBtn) {
+    cancelDashboardAbsenceBtn.onclick = () => {
+      const fromValue = document.getElementById("dashboardTimeSummaryFrom").value.trim();
+      const toValue = document.getElementById("dashboardTimeSummaryTo").value.trim();
+      showDashboardView({ onLock, timeSummaryFrom: fromValue, timeSummaryTo: toValue, showTimeOverview: true, showAbsenceForm: "" });
+    };
+  }
+
+  const saveDashboardAbsenceBtn = document.getElementById("saveDashboardAbsenceBtn");
+  if (saveDashboardAbsenceBtn) {
+    saveDashboardAbsenceBtn.onclick = async () => {
+      const msg = document.getElementById("dashboardAbsenceMsg");
+      const fromValue = document.getElementById("dashboardAbsenceFrom").value.trim();
+      const toValue = document.getElementById("dashboardAbsenceTo").value.trim();
+      const normalizedFrom = parseDeDateToComparable(fromValue);
+      const normalizedTo = parseDeDateToComparable(toValue);
+      msg.className = "error";
+      msg.textContent = "";
+
+      if (!normalizedFrom || !normalizedTo) {
+        msg.textContent = "Bitte gültige Von- und Bis-Daten eingeben.";
+        return;
+      }
+
+      if (normalizedTo < normalizedFrom) {
+        msg.textContent = "Bis darf nicht vor Von liegen.";
+        return;
+      }
+
       try {
-        await openAbwesenheitDialog('urlaub');
-        showDashboardView({
-          onLock,
-          timeSummaryFrom: document.getElementById("dashboardTimeSummaryFrom")?.value.trim() || timeSummaryFrom,
-          timeSummaryTo: document.getElementById("dashboardTimeSummaryTo")?.value.trim() || timeSummaryTo,
-          showTimeOverview: true
+        mutateRuntimeData((data) => {
+          if (!Array.isArray(data.abwesenheiten)) data.abwesenheiten = [];
+          data.abwesenheiten.push({
+            id: `abwesenheit_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+            type: showAbsenceForm === 'krank' ? 'krank' : 'urlaub',
+            from: fromValue,
+            to: toValue,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          });
         });
+        await queuePersistRuntimeData();
+        showDashboardView({ onLock, timeSummaryFrom: document.getElementById("dashboardTimeSummaryFrom").value.trim(), timeSummaryTo: document.getElementById("dashboardTimeSummaryTo").value.trim(), showTimeOverview: true, showAbsenceForm: "" });
       } catch (err) {
         console.error(err);
-        window.alert('Urlaub konnte nicht gespeichert werden.');
+        msg.textContent = err?.message || "Eintrag konnte nicht gespeichert werden.";
       }
     };
   }
 
-  const dashboardKrankBtn = document.getElementById("dashboardKrankBtn");
-  if (dashboardKrankBtn) {
-    dashboardKrankBtn.onclick = async () => {
-      try {
-        await openAbwesenheitDialog('krank');
-        showDashboardView({
-          onLock,
-          timeSummaryFrom: document.getElementById("dashboardTimeSummaryFrom")?.value.trim() || timeSummaryFrom,
-          timeSummaryTo: document.getElementById("dashboardTimeSummaryTo")?.value.trim() || timeSummaryTo,
-          showTimeOverview: true
-        });
-      } catch (err) {
-        console.error(err);
-        window.alert('Krankheit konnte nicht gespeichert werden.');
-      }
+  document.querySelectorAll('.delete-absence-btn').forEach((button) => {
+    button.onclick = async () => {
+      const absenceId = button.dataset.absenceId || '';
+      if (!absenceId) return;
+      if (!confirm('Diesen Eintrag wirklich löschen?')) return;
+      mutateRuntimeData((data) => {
+        data.abwesenheiten = (data.abwesenheiten || []).filter((item) => item.id !== absenceId);
+      });
+      await queuePersistRuntimeData();
+      showDashboardView({ onLock, timeSummaryFrom: document.getElementById("dashboardTimeSummaryFrom").value.trim(), timeSummaryTo: document.getElementById("dashboardTimeSummaryTo").value.trim(), showTimeOverview: true, showAbsenceForm: "" });
     };
-  }
+  });
 
   const dashboardSaveTimeBtn = document.getElementById("dashboardSaveTimeBtn");
   if (dashboardSaveTimeBtn) {
@@ -1817,7 +1844,7 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
           <input id="firstName" type="text">
 
           <label for="birthDate">Geburtsdatum</label>
-          <input id="birthDate" type="text" placeholder="DD.MM.YYYY" inputmode="numeric">
+          <input id="birthDate" type="text" placeholder="TT.MM.JJJJ" inputmode="numeric">
 
           <div class="checkbox-row">
             <label class="check-chip"><input id="befreit" type="checkbox"> <span>Befreit</span></label>
@@ -1931,7 +1958,7 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
                   <input id="edit-firstName-${patient.patientId}" type="text" value="${escapeHtml(patient.firstName || "")}">
 
                   <label for="edit-birthDate-${patient.patientId}">Geburtsdatum</label>
-                  <input id="edit-birthDate-${patient.patientId}" type="text" value="${escapeHtml(patient.birthDate || "")}" inputmode="numeric" placeholder="DD.MM.YYYY">
+                  <input id="edit-birthDate-${patient.patientId}" type="text" value="${escapeHtml(patient.birthDate || "")}" inputmode="numeric" placeholder="TT.MM.JJJJ">
 
                   <div class="checkbox-row">
                     <label class="check-chip"><input id="edit-befreit-${patient.patientId}" type="checkbox" ${patient.befreit ? "checked" : ""}> <span>Befreit</span></label>
@@ -2262,7 +2289,7 @@ export function showCreateRezeptView({ onLock, homeId, patientId }) {
       </datalist>
 
       <label for="ausstell">Ausstellungsdatum</label>
-      <input id="ausstell" type="text" placeholder="DD.MM.YYYY" inputmode="numeric">
+      <input id="ausstell" type="text" placeholder="TT.MM.JJJJ" inputmode="numeric">
 
       <div class="checkbox-row">
         <label class="check-chip"><input id="bg" type="checkbox"> <span>BG</span></label>
@@ -2480,7 +2507,7 @@ export function showRezeptDetailView({ onLock, homeId, patientId, rezeptId }) {
     <div class="card">
       <h3>Dokumentation zu diesem Rezept</h3>
       <label for="entryDate">Datum</label>
-      <input id="entryDate" type="text" placeholder="DD.MM.YYYY" inputmode="numeric">
+      <input id="entryDate" type="text" placeholder="TT.MM.JJJJ" inputmode="numeric">
 
       <label for="entryText">Dokumentation</label>
       <input id="entryText" type="text" placeholder="Behandlung / Verlauf / Besonderheiten">
@@ -3224,7 +3251,7 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "", ed
       <p class="muted">${escapeHtml(formHint)}</p>
 
       <label for="manualKmDate">Datum</label>
-      <input id="manualKmDate" type="text" value="${escapeHtml(formDateValue)}" placeholder="DD.MM.YYYY">
+      <input id="manualKmDate" type="text" value="${escapeHtml(formDateValue)}" placeholder="TT.MM.JJJJ">
 
       <label for="manualKmFrom">Von</label>
       <select id="manualKmFrom">
@@ -3298,10 +3325,10 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "", ed
       </summary>
       <div class="accordion-body">
         <label for="kmSummaryFrom">Von</label>
-        <input id="kmSummaryFrom" type="text" value="${escapeHtml(summaryFrom)}" placeholder="DD.MM.YYYY">
+        <input id="kmSummaryFrom" type="text" value="${escapeHtml(summaryFrom)}" placeholder="TT.MM.JJJJ">
 
         <label for="kmSummaryTo">Bis</label>
-        <input id="kmSummaryTo" type="text" value="${escapeHtml(summaryTo)}" placeholder="DD.MM.YYYY">
+        <input id="kmSummaryTo" type="text" value="${escapeHtml(summaryTo)}" placeholder="TT.MM.JJJJ">
 
         <div class="row">
           <button id="runKmSummaryBtn">Auswertung anzeigen</button>
