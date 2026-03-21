@@ -1256,11 +1256,10 @@ export function deleteRezeptTimeEntry(homeId, patientId, rezeptId, timeEntryId) 
 }
 
 export function getRezeptTimeEntries(rezept) {
-  return [...(rezept?.timeEntries || [])].sort((a, b) => {
-    const ad = String(a?.date || "");
-    const bd = String(b?.date || "");
-    return bd.localeCompare(ad, "de");
-  });
+  return [...(rezept?.timeEntries || [])].sort((a, b) =>
+    compareDeDates(String(b?.date || ""), String(a?.date || ""))
+    || String(b?.createdAt || "").localeCompare(String(a?.createdAt || ""), "de")
+  );
 }
 
 export function getRezeptTimeSummary(rezept) {

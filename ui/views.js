@@ -3186,7 +3186,8 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "", ed
   const summary = getKilometerPeriodSummary(summaryFrom, summaryTo);
 
   const travelLog = [...(overview.travelLog || [])].sort((a, b) =>
-    collatorDE.compare(`${b.date} ${b.createdAt || ""}`, `${a.date} ${a.createdAt || ""}`)
+    compareDeDates(String(b?.date || ""), String(a?.date || ""))
+    || collatorDE.compare(String(b?.createdAt || ""), String(a?.createdAt || ""))
   );
   const editingItem = editTravelId ? travelLog.find((item) => item.travelId === editTravelId) || null : null;
   const formTitle = editingItem ? "Fahrt bearbeiten" : "Manuelle Fahrt ergänzen";
