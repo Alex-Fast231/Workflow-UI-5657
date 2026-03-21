@@ -62,6 +62,7 @@ import { getRezeptFristInfo } from "../modules/fristen.js";
 import { exportBackup, importBackup, downloadBlob, validateBackupZip } from "../modules/backup.js";
 import { mutateRuntimeData } from "../core/app-core.js";
 import {
+  normalizeDeDateInput,
   parseDeDate,
   formatDeDate,
   compareDeDates,
