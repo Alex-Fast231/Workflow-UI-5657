@@ -496,6 +496,32 @@ function bindDateAutoFormat(input) {
   });
 }
 
+function isAutoDateField(input) {
+  if (!input || input.tagName !== "INPUT") return false;
+  if ((input.getAttribute("type") || "text").toLowerCase() !== "text") return false;
+
+  const placeholder = String(input.getAttribute("placeholder") || "").trim();
+  if (placeholder === "TT.MM.JJJJ") return true;
+
+  const id = String(input.id || "").toLowerCase();
+  return [
+    "date",
+    "birthdate",
+    "ausstell",
+    "summaryfrom",
+    "summaryto",
+    "absencefrom",
+    "absenceto"
+  ].some((token) => id.includes(token));
+}
+
+function bindDateAutoFormatsIn(root = document) {
+  if (!root || typeof root.querySelectorAll !== "function") return;
+  root.querySelectorAll('input').forEach((input) => {
+    if (isAutoDateField(input)) bindDateAutoFormat(input);
+  });
+}
+
 function renderRezeptItemsEditor(items = []) {
   const safe = Array.isArray(items) && items.length ? items : [{}];
   return `
@@ -572,6 +598,7 @@ function collectRezeptItemsFromForm() {
 
 function render(html) {
   app.innerHTML = html;
+  bindDateAutoFormatsIn(app);
 }
 
 function openHtmlDocument(title, bodyHtml, { autoPrint = false } = {}) {
