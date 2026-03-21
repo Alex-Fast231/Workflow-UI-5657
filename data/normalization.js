@@ -1,9 +1,6 @@
 import { createEmptyAppData, APP_SCHEMA_VERSION, APP_VERSION, APP_MODULE, PRACTICE_ADDRESS } from "./schema.js";
 import { formatDeDate, parseDeDate } from "../core/date-utils.js";
-
-function generateId(prefix) {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-}
+import { generateId, getRezeptAusstellungsdatum } from "../core/utils.js";
 
 function ensureString(value, fallback = "") {
   return typeof value === "string" ? value : fallback;
@@ -83,15 +80,8 @@ function normalizeItem(item) {
   };
 }
 
-function getRezeptAusstellungsdatum(source) {
-  const item = source && typeof source === "object" ? source : {};
-  return ensureDeDateString(
-    item.ausstell
-    || item.ausstellungsdatum
-    || item.issueDate
-    || item.datum
-    || item.verordnungsdatum
-  );
+function getNormalizedRezeptAusstellungsdatum(source) {
+  return ensureDeDateString(getRezeptAusstellungsdatum(source));
 }
 
 function normalizeRezept(rezept) {
@@ -120,7 +110,7 @@ const allowedStatus = ["Aktiv", "Pausiert", "Abgeschlossen", "Abgegeben"].includ
 return {
   rezeptId: ensureString(source.rezeptId || source.id) || generateId("rezept"),
   arzt: ensureString(source.arzt || source.doctor),
-  ausstell: getRezeptAusstellungsdatum(source),
+  ausstell: getNormalizedRezeptAusstellungsdatum(source),
   status: allowedStatus,
   bg: ensureBoolean(source.bg, false),
   dt: ensureBoolean(source.dt, false),

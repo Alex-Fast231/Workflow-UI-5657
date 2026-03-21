@@ -1,6 +1,4 @@
-function generateId(prefix) {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-}
+import { generateId } from "../core/utils.js";
 
 export function createSecurityLogEntry(type, payload = {}) {
   return {

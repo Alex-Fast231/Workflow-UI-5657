@@ -1,9 +1,6 @@
 import { getRuntimeData, mutateRuntimeData } from "../core/app-core.js";
 import { compareDeDates, isDateInRange } from "../core/date-utils.js";
-
-function generateId(prefix) {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-}
+import { generateId, getRezeptAusstellungsdatum } from "../core/utils.js";
 
 export const REZEPT_STATUS_OPTIONS = [
   "Aktiv",
@@ -792,18 +789,6 @@ export function searchPatientsInHome(home, query) {
 
     return haystack.includes(q);
   });
-}
-
-function getRezeptAusstellungsdatum(rezept) {
-  const source = rezept && typeof rezept === "object" ? rezept : {};
-  return String(
-    source.ausstell
-    || source.ausstellungsdatum
-    || source.issueDate
-    || source.datum
-    || source.verordnungsdatum
-    || ""
-  ).trim();
 }
 
 function buildAbgabeLeistungText(rezept) {
