@@ -324,3 +324,7 @@ export function finalizeAppStructure(data) {
 
   return result;
 }
+
+export function normalizeAppData(data) {
+  return finalizeAppStructure(data);
+}

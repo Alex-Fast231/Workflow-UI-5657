@@ -1,6 +1,6 @@
 import { generateSalt, toBase64, fromBase64, encryptJSON, decryptJSON, encryptText, decryptText } from "../crypto/crypto-engine.js";
 import { generateDataKey, wrapDataKeyWithPassword, wrapDataKeyWithPIN, unwrapDataKeyWithPassword, unwrapDataKeyWithPIN } from "../crypto/key-management.js";
-import { finalizeAppStructure } from "../data/normalization.js";
+import { normalizeAppData } from "../data/normalization.js";
 import { createDefaultSecurityState, isLockedOut, registerFailedLogin, registerSuccessfulUnlock } from "./lock.js";
 import { saveCryptoMeta, saveEncryptedAppData, saveSecurityState } from "../storage/secure-store.js";
 
@@ -25,7 +25,7 @@ export async function createCryptoMeta({ password, pin, dataKey }) {
 }
 
 export async function setupSecurity({ password, pin, initialAppData }) {
-  const normalized = finalizeAppStructure(initialAppData);
+  const normalized = normalizeAppData(initialAppData);
   const dataKey = await generateDataKey();
   const cryptoMeta = await createCryptoMeta({ password, pin, dataKey });
   const encryptedAppData = await encryptJSON(normalized, dataKey);
@@ -59,7 +59,7 @@ export async function unlockWithPIN({ pin, cryptoMeta, encryptedAppData, securit
     );
 
     const data = await decryptJSON(encryptedAppData, dataKey);
-    const runtimeData = finalizeAppStructure(data);
+    const runtimeData = normalizeAppData(data);
     const nextSecurityState = registerSuccessfulUnlock(securityState, "pin");
 
     await saveSecurityState(nextSecurityState);

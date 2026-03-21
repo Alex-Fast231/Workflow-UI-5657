@@ -1,4 +1,4 @@
-import { finalizeAppStructure } from "../data/normalization.js";
+import { normalizeAppData } from "../data/normalization.js";
 import { encryptJSON } from "../crypto/crypto-engine.js";
 import { saveEncryptedAppData } from "../storage/secure-store.js";
 
@@ -13,7 +13,7 @@ let persistScheduled = false;
 
 export function setRuntimeSession(session) {
   runtimeKey = session.runtimeKey ?? null;
-  runtimeData = session.runtimeData ? finalizeAppStructure(session.runtimeData) : null;
+  runtimeData = session.runtimeData ? normalizeAppData(session.runtimeData) : null;
   cryptoMeta = session.cryptoMeta ?? cryptoMeta;
   securityState = session.securityState ?? securityState;
 }
@@ -67,7 +67,7 @@ export function mutateRuntimeData(mutatorFn) {
   }
 
   mutatorFn(runtimeData);
-  runtimeData = finalizeAppStructure(runtimeData);
+  runtimeData = normalizeAppData(runtimeData);
   return runtimeData;
 }
 
@@ -76,7 +76,7 @@ export async function persistRuntimeData() {
     throw new Error("Runtime Session ist nicht entsperrt");
   }
 
-  const normalized = finalizeAppStructure(runtimeData);
+  const normalized = normalizeAppData(runtimeData);
   const encrypted = await encryptJSON(normalized, runtimeKey);
   await saveEncryptedAppData(encrypted);
   runtimeData = normalized;

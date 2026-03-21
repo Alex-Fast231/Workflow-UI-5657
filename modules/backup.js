@@ -1,5 +1,5 @@
 import { APP_MODULE, APP_SCHEMA_VERSION, APP_VERSION } from "../data/schema.js";
-import { finalizeAppStructure } from "../data/normalization.js";
+import { finalizeAppStructure, normalizeAppData } from "../data/normalization.js";
 import { fromBase64 } from "../crypto/crypto-engine.js";
 import { getPracticePasswordFromRuntime, verifyPracticePassword } from "../security/auth.js";
 import {
@@ -61,9 +61,320 @@ function ensureBase64String(value, fieldLabel) {
   }
 }
 
+function isPlainObject(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function clonePlainObject(value) {
+  return isPlainObject(value) ? { ...value } : {};
+}
+
+function ensureStringValue(value, fallback = "") {
+  return typeof value === "string" ? value : fallback;
+}
+
+function ensureArrayValue(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function generateMigrationId(prefix) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function normalizeLegacyDateValue(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const dd = String(value.getDate()).padStart(2, "0");
+    const mm = String(value.getMonth() + 1).padStart(2, "0");
+    const yyyy = String(value.getFullYear());
+    return `${dd}.${mm}.${yyyy}`;
+  }
+
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  const deMatch = raw.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (deMatch) {
+    const dd = deMatch[1].padStart(2, "0");
+    const mm = deMatch[2].padStart(2, "0");
+    return `${dd}.${mm}.${deMatch[3]}`;
+  }
+
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})(?:T.*)?$/);
+  if (isoMatch) {
+    return `${isoMatch[3]}.${isoMatch[2]}.${isoMatch[1]}`;
+  }
+
+  const compactMatch = raw.replace(/\D/g, "").match(/^(\d{2})(\d{2})(\d{4})$/);
+  if (compactMatch) {
+    return `${compactMatch[1]}.${compactMatch[2]}.${compactMatch[3]}`;
+  }
+
+  return raw;
+}
+
+function normalizeEntryForMigration(entry) {
+  const source = clonePlainObject(entry);
+  return {
+    ...source,
+    entryId: ensureStringValue(source.entryId || source.id) || generateMigrationId("entry"),
+    date: normalizeLegacyDateValue(source.date || source.datum),
+    text: ensureStringValue(source.text || source.doku || source.note),
+    linkedTimeEntryId: ensureStringValue(source.linkedTimeEntryId || source.timeEntryId),
+    autoTimeMinutes: Number.isFinite(Number(source.autoTimeMinutes)) ? Number(source.autoTimeMinutes) : 0
+  };
+}
+
+function normalizeTimeEntryForMigration(entry) {
+  const source = clonePlainObject(entry);
+  const type = ensureStringValue(source.type).trim();
+  return {
+    ...source,
+    timeEntryId: ensureStringValue(source.timeEntryId || source.id) || generateMigrationId("time"),
+    date: normalizeLegacyDateValue(source.date || source.datum),
+    minutes: Number.isFinite(Number(source.minutes ?? source.duration ?? source.dauer))
+      ? Number(source.minutes ?? source.duration ?? source.dauer)
+      : 0,
+    type: ["behandlung", "dokumentation", "besprechung", "manuell"].includes(type) ? type : "behandlung",
+    note: ensureStringValue(source.note || source.text),
+    sourceEntryId: ensureStringValue(source.sourceEntryId || source.linkedEntryId),
+    confirmed: typeof source.confirmed === "boolean" ? source.confirmed : true
+  };
+}
+
+function normalizeItemForMigration(item) {
+  const source = clonePlainObject(item);
+  const type = ensureStringValue(source.type || source.leistung).trim();
+  return {
+    ...source,
+    itemId: ensureStringValue(source.itemId || source.id) || generateMigrationId("item"),
+    type,
+    count: type === "Blanko" ? "" : ensureStringValue(source.count ?? source.anzahl ?? source.menge)
+  };
+}
+
+function normalizeRezeptForMigration(rezept) {
+  const source = clonePlainObject(rezept);
+  const items = Array.isArray(source.items)
+    ? source.items.map(normalizeItemForMigration).filter((item) => item.type)
+    : (() => {
+        const type = ensureStringValue(source.leistung).trim();
+        return type
+          ? [{
+              itemId: generateMigrationId("item"),
+              type,
+              count: type === "Blanko" ? "" : ensureStringValue(source.anzahl ?? source.count ?? source.menge)
+            }]
+          : [];
+      })();
+
+  return {
+    ...source,
+    rezeptId: ensureStringValue(source.rezeptId || source.id) || generateMigrationId("rezept"),
+    patientId: ensureStringValue(source.patientId || source.patientRef || source.ownerPatientId),
+    arzt: ensureStringValue(source.arzt || source.doctor),
+    ausstell: normalizeLegacyDateValue(
+      source.ausstell
+      || source.ausstellungsdatum
+      || source.issueDate
+      || source.datum
+      || source.verordnungsdatum
+    ),
+    items,
+    entries: ensureArrayValue(source.entries).map(normalizeEntryForMigration),
+    timeEntries: ensureArrayValue(source.timeEntries).map(normalizeTimeEntryForMigration)
+  };
+}
+
+function normalizePatientForMigration(patient) {
+  const source = clonePlainObject(patient);
+  return {
+    ...source,
+    patientId: ensureStringValue(source.patientId || source.id) || generateMigrationId("patient"),
+    firstName: ensureStringValue(source.firstName || source.vorname),
+    lastName: ensureStringValue(source.lastName || source.nachname || source.name),
+    birthDate: normalizeLegacyDateValue(source.birthDate || source.geburtsdatum || source.geb),
+    entries: ensureArrayValue(source.entries).map(normalizeEntryForMigration),
+    rezepte: ensureArrayValue(source.rezepte).map(normalizeRezeptForMigration)
+  };
+}
+
+function normalizeHomeForMigration(home) {
+  const source = clonePlainObject(home);
+  return {
+    ...source,
+    homeId: ensureStringValue(source.homeId || source.id) || generateMigrationId("home"),
+    name: ensureStringValue(source.name || source.heim || source.titel),
+    adresse: ensureStringValue(source.adresse || source.address),
+    patients: ensureArrayValue(source.patients).map(normalizePatientForMigration)
+  };
+}
+
+function normalizeKnownRouteForMigration(route) {
+  const source = clonePlainObject(route);
+  return {
+    ...source,
+    routeId: ensureStringValue(source.routeId || source.id) || generateMigrationId("route"),
+    fromPointId: ensureStringValue(source.fromPointId),
+    toPointId: ensureStringValue(source.toPointId),
+    fromLabel: ensureStringValue(source.fromLabel || source.from),
+    toLabel: ensureStringValue(source.toLabel || source.to),
+    km: Number.isFinite(Number(source.km)) ? Number(source.km) : 0
+  };
+}
+
+function normalizeTravelLogForMigration(entry) {
+  const source = clonePlainObject(entry);
+  const date = normalizeLegacyDateValue(source.date || source.datum);
+  const km = Number(source.km);
+  if (!date || !Number.isFinite(km) || km < 0) {
+    return null;
+  }
+
+  return {
+    ...source,
+    travelId: ensureStringValue(source.travelId || source.id) || generateMigrationId("travel"),
+    date,
+    fromPointId: ensureStringValue(source.fromPointId),
+    toPointId: ensureStringValue(source.toPointId),
+    fromLabel: ensureStringValue(source.fromLabel || source.from),
+    toLabel: ensureStringValue(source.toLabel || source.to),
+    km,
+    source: ensureStringValue(source.source || "auto") || "auto",
+    relatedEntryId: ensureStringValue(source.relatedEntryId || source.entryId),
+    note: ensureStringValue(source.note)
+  };
+}
+
+function normalizeAbsenceForMigration(item) {
+  const source = clonePlainObject(item);
+  const type = ensureStringValue(source.type).trim().toLowerCase() === "krank" ? "krank" : "urlaub";
+  return {
+    ...source,
+    id: ensureStringValue(source.id) || generateMigrationId("abwesenheit"),
+    type,
+    from: normalizeLegacyDateValue(source.from || source.von),
+    to: normalizeLegacyDateValue(source.to || source.bis)
+  };
+}
+
+function integrateLegacyFlatCollections(result) {
+  const homes = ensureArrayValue(result.homes);
+  const legacyPatients = ensureArrayValue(result.patients).map(normalizePatientForMigration);
+  const legacyRezepte = ensureArrayValue(result.verordnungen).map(normalizeRezeptForMigration);
+
+  const patientMap = new Map();
+  homes.forEach((home) => {
+    ensureArrayValue(home.patients).forEach((patient) => {
+      patientMap.set(patient.patientId, patient);
+    });
+  });
+
+  let legacyHome = homes.find((home) => ensureStringValue(home.homeId) === "legacy_import_home");
+  if ((!legacyHome && legacyPatients.length) || legacyRezepte.some((rezept) => !patientMap.has(rezept.patientId))) {
+    legacyHome = legacyHome || {
+      homeId: "legacy_import_home",
+      name: "Importierte Alt-Daten",
+      adresse: "",
+      patients: []
+    };
+    if (!homes.includes(legacyHome)) {
+      homes.push(legacyHome);
+    }
+  }
+
+  legacyPatients.forEach((patient) => {
+    if (!patientMap.has(patient.patientId)) {
+      legacyHome.patients.push(patient);
+      patientMap.set(patient.patientId, patient);
+    }
+  });
+
+  legacyRezepte.forEach((rezept) => {
+    const patientId = ensureStringValue(rezept.patientId);
+    let patient = patientId ? patientMap.get(patientId) : null;
+
+    if (!patient) {
+      patient = {
+        patientId: patientId || generateMigrationId("patient"),
+        firstName: "",
+        lastName: "Importiert",
+        birthDate: "",
+        befreit: false,
+        hb: false,
+        verstorben: false,
+        entries: [],
+        rezepte: []
+      };
+      legacyHome.patients.push(patient);
+      patientMap.set(patient.patientId, patient);
+    }
+
+    const alreadyExists = ensureArrayValue(patient.rezepte).some((item) => ensureStringValue(item.rezeptId) === rezept.rezeptId);
+    if (!alreadyExists) {
+      patient.rezepte = ensureArrayValue(patient.rezepte);
+      patient.rezepte.push(rezept);
+    }
+  });
+
+  result.homes = homes;
+}
+
 export function migrateBackupData(data, fromVersion) {
-  void fromVersion;
-  return data;
+  const source = isPlainObject(data) ? clonePlainObject(data) : data;
+  const version = Number.isFinite(Number(fromVersion)) && Number(fromVersion) > 0 ? Number(fromVersion) : 1;
+
+  if (!isPlainObject(source)) {
+    return data;
+  }
+
+  if (typeof source.cipherBase64 === "string" && typeof source.ivBase64 === "string") {
+    return {
+      ...source,
+      schemaVersion: Number.isFinite(Number(source.schemaVersion)) ? Number(source.schemaVersion) : version
+    };
+  }
+
+  if (typeof source.passwordSaltBase64 === "string" || typeof source.pinSaltBase64 === "string") {
+    return {
+      ...source,
+      schemaVersion: Number.isFinite(Number(source.schemaVersion)) ? Number(source.schemaVersion) : version
+    };
+  }
+
+  if (source.type === "fast-doku-backup" || Object.prototype.hasOwnProperty.call(source, "viewerCompatible")) {
+    return {
+      ...source,
+      schemaVersion: Number.isFinite(Number(source.schemaVersion)) ? Number(source.schemaVersion) : version,
+      therapistName: ensureStringValue(source.therapistName),
+      therapistFax: ensureStringValue(source.therapistFax),
+      practicePhone: ensureStringValue(source.practicePhone),
+      workDays: ensureArrayValue(source.workDays),
+      weeklyHours: typeof source.weeklyHours === "number" ? String(source.weeklyHours) : ensureStringValue(source.weeklyHours)
+    };
+  }
+
+  const result = {
+    ...source,
+    schemaVersion: version,
+    homes: ensureArrayValue(source.homes).map(normalizeHomeForMigration),
+    patients: ensureArrayValue(source.patients).map(normalizePatientForMigration),
+    verordnungen: ensureArrayValue(source.verordnungen).map(normalizeRezeptForMigration),
+    zeit: isPlainObject(source.zeit) ? { ...source.zeit } : { timeEntries: [] },
+    kilometer: isPlainObject(source.kilometer) ? { ...source.kilometer } : { entries: [] },
+    abwesenheiten: ensureArrayValue(source.abwesenheiten).map(normalizeAbsenceForMigration)
+  };
+
+  result.zeit.timeEntries = ensureArrayValue(result.zeit.timeEntries).map(normalizeTimeEntryForMigration);
+  result.kilometer.entries = ensureArrayValue(result.kilometer.entries)
+    .map(normalizeTravelLogForMigration)
+    .filter(Boolean);
+  result.kilometer.knownRoutes = ensureArrayValue(result.kilometer.knownRoutes).map(normalizeKnownRouteForMigration);
+  result.kilometer.travelLog = ensureArrayValue(result.kilometer.travelLog)
+    .map(normalizeTravelLogForMigration)
+    .filter(Boolean);
+
+  integrateLegacyFlatCollections(result);
+  return normalizeAppData(result);
 }
 
 function countRuntimeEntities(normalized) {
