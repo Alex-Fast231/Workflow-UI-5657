@@ -1220,7 +1220,7 @@ export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo 
   render(`
     ${renderDashboardHeaderCard({ therapistName })}
 
-    <details class="accordion">
+    <details class="accordion" ${showTimeOverview || hasTimeSummaryFilter || showAbsenceForm ? 'open' : ''}>
       <summary>
         <span>Überblick</span>
         <span class="muted">Stunden</span>
