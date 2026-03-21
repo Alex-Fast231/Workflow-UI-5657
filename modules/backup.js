@@ -105,7 +105,6 @@ export function buildBackupMeta(runtimeData) {
     practicePhone: normalized.settings?.practicePhone || "",
     workDays: Array.isArray(normalized.settings?.workDays) ? normalized.settings.workDays : [],
     weeklyHours: normalized.settings?.weeklyHours || "",
-    absenceCount: Array.isArray(normalized.abwesenheiten) ? normalized.abwesenheiten.length : 0,
     counts
   };
 }

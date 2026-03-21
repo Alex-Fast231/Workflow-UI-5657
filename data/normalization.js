@@ -220,22 +220,6 @@ function normalizeKilometerState(state) {
   };
 }
 
-
-function normalizeAbwesenheiten(items) {
-  return ensureArray(items).map((item) => {
-    const source = item && typeof item === "object" ? item : {};
-    const type = ensureString(source.type).trim().toLowerCase() === "krank" ? "krank" : "urlaub";
-    return {
-      id: ensureString(source.id) || generateId("abwesenheit"),
-      type,
-      from: ensureString(source.from || source.von),
-      to: ensureString(source.to || source.bis),
-      createdAt: ensureString(source.createdAt, new Date().toISOString()),
-      updatedAt: ensureString(source.updatedAt, new Date().toISOString())
-    };
-  });
-}
-
 function normalizeNachbestellHistory(items) {
   return ensureArray(items).map((item) => {
     const source = item && typeof item === "object" ? item : {};
@@ -304,10 +288,19 @@ export function finalizeAppStructure(data) {
 
     kilometer: normalizeKilometerState(source.kilometer),
 
-    abwesenheiten: normalizeAbwesenheiten(source.abwesenheiten),
-
     abgabeHistory: normalizeAbgabeHistory(source.abgabeHistory),
     nachbestellHistory: normalizeNachbestellHistory(source.nachbestellHistory),
+    abwesenheiten: ensureArray(source.abwesenheiten).map((item) => {
+      const entry = item && typeof item === "object" ? item : {};
+      return {
+        id: ensureString(entry.id) || generateId("absence"),
+        type: ["urlaub", "krank"].includes(ensureString(entry.type)) ? ensureString(entry.type) : "urlaub",
+        from: ensureString(entry.from),
+        to: ensureString(entry.to),
+        createdAt: ensureString(entry.createdAt, now),
+        updatedAt: now
+      };
+    }),
 
     security: {
       log: ensureArray(source.security?.log),
