@@ -178,6 +178,13 @@ function isValidIsoDate(value) {
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === comparable;
 }
 
+function isValidDeDate(value) {
+  const comparable = parseDeDateToComparable(value);
+  if (!comparable) return false;
+  const date = new Date(`${comparable}T00:00:00`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === comparable;
+}
+
 function getWorkdayCodeFromComparableDate(value) {
   const comparable = toComparableDate(value);
   if (!comparable) return '';
@@ -255,19 +262,23 @@ async function saveAbwesenheit(type, from, to) {
 }
 
 async function openAbwesenheitDialog(type) {
-  const from = window.prompt('Von Datum (YYYY-MM-DD):', '');
+  const from = window.prompt('Von Datum (TT.MM.JJJJ):', '');
   if (!from) return;
-  const to = window.prompt('Bis Datum (YYYY-MM-DD):', '');
+  const to = window.prompt('Bis Datum (TT.MM.JJJJ):', '');
   if (!to) return;
-  if (!isValidIsoDate(from) || !isValidIsoDate(to)) {
-    window.alert('Bitte Datum im Format YYYY-MM-DD eingeben.');
+  const fromValue = from.trim();
+  const toValue = to.trim();
+  if (!isValidDeDate(fromValue) || !isValidDeDate(toValue)) {
+    window.alert('Bitte Datum im Format TT.MM.JJJJ eingeben.');
     return;
   }
-  if (to < from) {
+  const fromComparable = parseDeDateToComparable(fromValue);
+  const toComparable = parseDeDateToComparable(toValue);
+  if (toComparable < fromComparable) {
     window.alert('Bis-Datum darf nicht vor Von-Datum liegen');
     return;
   }
-  await saveAbwesenheit(type, from, to);
+  await saveAbwesenheit(type, fromValue, toValue);
   window.alert('Gespeichert');
 }
 
