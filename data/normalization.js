@@ -146,6 +146,16 @@ return {
       createdAt: ensureIsoString(entry.createdAt, now),
       updatedAt: ensureIsoString(entry.updatedAt, now)
     };
+  }),
+  doctorReports: ensureArray(source.doctorReports).map((item) => {
+    const now = new Date().toISOString();
+    const report = item && typeof item === "object" ? item : {};
+    return {
+      reportId: ensureString(report.reportId || report.id) || generateId("report"),
+      content: ensureString(report.content || report.text),
+      createdAt: ensureIsoString(report.createdAt, now),
+      updatedAt: ensureIsoString(report.updatedAt, now)
+    };
   })
 };
 }

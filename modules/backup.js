@@ -194,7 +194,17 @@ function normalizeRezeptForMigration(rezept) {
     ),
     items,
     entries: ensureArrayValue(source.entries).map(normalizeEntryForMigration),
-    timeEntries: ensureArrayValue(source.timeEntries).map(normalizeTimeEntryForMigration)
+    timeEntries: ensureArrayValue(source.timeEntries).map(normalizeTimeEntryForMigration),
+    doctorReports: ensureArrayValue(source.doctorReports).map((item) => {
+      const report = clonePlainObject(item);
+      return {
+        ...report,
+        reportId: ensureStringValue(report.reportId || report.id) || generateMigrationId("report"),
+        content: ensureStringValue(report.content || report.text),
+        createdAt: ensureStringValue(report.createdAt) || new Date().toISOString(),
+        updatedAt: ensureStringValue(report.updatedAt) || ensureStringValue(report.createdAt) || new Date().toISOString()
+      };
+    })
   };
 }
 

@@ -584,7 +584,8 @@ export function createRezept(homeId, patientId, payload) {
         viewerLabel: "",
         lastExportAt: ""
       },
-      timeEntries: []
+      timeEntries: [],
+      doctorReports: []
     });
   });
 }
@@ -629,6 +630,10 @@ export function updateRezept(homeId, patientId, rezeptId, payload) {
         viewerLabel: "",
         lastExportAt: ""
       };
+    }
+
+    if (!Array.isArray(rezept.doctorReports)) {
+      rezept.doctorReports = [];
     }
 
     ensureRezeptTimeState(rezept);
