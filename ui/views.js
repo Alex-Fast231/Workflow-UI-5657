@@ -42,6 +42,7 @@ import {
   saveNachbestellHistorySnapshot,
   deleteNachbestellHistoryItem,
   buildNachbestellLetterData,
+  markNachbestellRowsAsAbgegeben,
   buildAbgabeTree,
   buildNachbestellTree,
   createRezeptTimeEntry,
@@ -1379,14 +1380,13 @@ export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo 
           <input id="dashboardTimeSummaryTo" type="text" value="${escapeHtml(timeSummaryTo)}" placeholder="TT.MM.JJJJ" inputmode="numeric">
 
           <div class="row">
-  <button id="openUrlaubBtn" class="secondary">Urlaub</button>
-  <button id="openKrankBtn" class="secondary">Krank</button>
-</div>
-
-<div class="row">
-  <button id="runDashboardTimeSummaryBtn">Auswertung anzeigen</button>
-  <button id="openHolidayBtn" class="secondary">Feiertage</button>
-</div>
+            <button id="openUrlaubBtn" class="secondary">Urlaub</button>
+            <button id="openKrankBtn" class="secondary">Krank</button>
+            <button id="openHolidayBtn" class="secondary">Feiertage</button>
+          </div>
+          <div class="row">
+            <button id="runDashboardTimeSummaryBtn">Auswertung anzeigen</button>
+          </div>
 
           <div id="dashboardAbsenceFormPanel" class="compact-card" style="margin:12px 0 0 0; padding:10px; display:${showAbsenceForm ? 'block' : 'none'};">
             <div style="font-weight:600; margin-bottom:10px;">${showAbsenceForm === 'krank' ? 'Krank eintragen' : 'Urlaub eintragen'}</div>
@@ -3584,6 +3584,7 @@ export function showNachbestellungView({ onLock, doctorFilter = "", textFilter =
         snapshotHtml: bodyHtml,
         lines
       });
+      markNachbestellRowsAsAbgegeben(getChosenRows());
       await queuePersistRuntimeData();
       openLetterPreview(letterData.title, bodyHtml);
       showNachbestellungView({
