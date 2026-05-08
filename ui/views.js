@@ -98,6 +98,13 @@ function sortPatientsAlpha(patients) {
   });
 }
 
+function isPatientDeceased(patient) {
+  const value = patient?.verstorben;
+  if (value === true) return true;
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "true" || normalized === "1" || normalized === "ja" || normalized === "verstorben";
+}
+
 function sortRezepteForDisplay(rezepte) {
   return [...(rezepte || [])].sort((a, b) => compareDeDates(b?.ausstell, a?.ausstell));
 }
@@ -2338,7 +2345,7 @@ export function showHomesView({ onLock, searchText = "" }) {
               <div style="flex:1; min-width:0;">
                 <div style="font-weight:700;">${escapeHtml(home.name || "Ohne Name")}</div>
                 <div class="compact-meta">${escapeHtml(home.adresse || "Keine Adresse")}</div>
-                <div class="compact-meta">${home.patients?.length || 0} Patient(en)</div>
+                <div class="compact-meta">${(home.patients || []).filter((patient) => !isPatientDeceased(patient)).length} Patient(en)</div>
               </div>
               <button class="secondary editHomeToggleBtn" data-home-id="${home.homeId}" title="Heim bearbeiten" aria-label="Heim bearbeiten" style="width:auto; padding:8px 10px;">✎</button>
             </div>
@@ -2487,7 +2494,7 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
     return;
   }
 
-  const filteredPatients = sortPatientsAlpha(searchPatientsInHome(home, searchText));
+  const filteredPatients = sortPatientsAlpha(searchPatientsInHome(home, searchText).filter((patient) => !isPatientDeceased(patient)));
 
   render(`
     <div class="card">
