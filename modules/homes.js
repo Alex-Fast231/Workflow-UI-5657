@@ -54,6 +54,38 @@ function getAutomaticTreatmentMinutes(rezept) {
   return firstMinutes;
 }
 
+function getEffectiveRezeptTimeEntryMinutes(rezept, entry) {
+  const storedMinutes = Number(entry?.minutes || 0);
+  const fallbackMinutes = Number.isFinite(storedMinutes) && storedMinutes > 0 ? storedMinutes : 0;
+  const isAutomaticTreatmentEntry = String(entry?.type || "") === "behandlung" && String(entry?.sourceEntryId || "").trim();
+
+  if (!isAutomaticTreatmentEntry) {
+    return fallbackMinutes;
+  }
+
+  const currentRecipeMinutes = getAutomaticTreatmentMinutes(rezept);
+  return currentRecipeMinutes > 0 ? currentRecipeMinutes : fallbackMinutes;
+}
+
+export function getRezeptEntryAutoMinutes(rezept, entry) {
+  const linkedTimeEntryId = String(entry?.linkedTimeEntryId || "").trim();
+  const timeEntry = (rezept?.timeEntries || []).find((item) => String(item?.timeEntryId || "") === linkedTimeEntryId);
+
+  if (timeEntry) {
+    return getEffectiveRezeptTimeEntryMinutes(rezept, timeEntry);
+  }
+
+  const storedMinutes = Number(entry?.autoTimeMinutes || 0);
+  const fallbackMinutes = Number.isFinite(storedMinutes) && storedMinutes > 0 ? storedMinutes : 0;
+
+  if (String(entry?.entryId || "").trim()) {
+    const currentRecipeMinutes = getAutomaticTreatmentMinutes(rezept);
+    return currentRecipeMinutes > 0 ? currentRecipeMinutes : fallbackMinutes;
+  }
+
+  return fallbackMinutes;
+}
+
 function createTimeEntryObject(payload = {}) {
   const now = new Date().toISOString();
   const minutes = Number(payload.minutes);
@@ -117,6 +149,10 @@ function ensureKilometerState(data) {
 
   if (!Array.isArray(data.kilometer.travelLog)) {
     data.kilometer.travelLog = [];
+  }
+
+  if (!Array.isArray(data.kilometer.kmExports)) {
+    data.kilometer.kmExports = [];
   }
 
   return data.kilometer;
@@ -340,8 +376,21 @@ export function saveKnownKilometerRoute(payload) {
       }
     };
 
-    upsert(fromPointId, toPointId, String(payload?.fromLabel || "").trim(), String(payload?.toLabel || "").trim());
-    upsert(toPointId, fromPointId, String(payload?.toLabel || "").trim(), String(payload?.fromLabel || "").trim());
+    const fromLabel = String(payload?.fromLabel || "").trim();
+    const toLabel = String(payload?.toLabel || "").trim();
+
+    upsert(fromPointId, toPointId, fromLabel, toLabel);
+    upsert(toPointId, fromPointId, toLabel, fromLabel);
+
+    (kilometerState.travelLog || []).forEach((item) => {
+      const isSameDirection = item.fromPointId === fromPointId && item.toPointId === toPointId;
+      const isOppositeDirection = item.fromPointId === toPointId && item.toPointId === fromPointId;
+      if (!isSameDirection && !isOppositeDirection) return;
+      if (item.manualAdjusted === true) return;
+
+      item.km = km;
+      item.updatedAt = now;
+    });
   });
 }
 
@@ -352,7 +401,8 @@ export function getKilometerOverview() {
   return {
     startPoint: kilometerState.startPoint,
     knownRoutes: [...kilometerState.knownRoutes],
-    travelLog: [...kilometerState.travelLog]
+    travelLog: [...kilometerState.travelLog],
+    kmExports: [...kilometerState.kmExports]
   };
 }
 
@@ -457,6 +507,7 @@ export function getKilometerPeriodSummary(fromDate, toDate) {
   if (!data) throw new Error('Kein runtimeData Zustand vorhanden');
   const kilometerState = ensureKilometerState(data);
   const rows = (kilometerState.travelLog || [])
+    .filter((item) => item?.abgerechnet !== true)
     .filter((item) => isDateInRange(item.date, fromDate, toDate))
     .sort((a, b) => compareDeDates(a?.date, b?.date) || String(a?.createdAt || '').localeCompare(String(b?.createdAt || ''), 'de'));
 
@@ -470,6 +521,50 @@ export function getKilometerPeriodSummary(fromDate, toDate) {
     totalKm,
     totalAmount
   };
+}
+
+export function finalizeKilometerExport(fromDate, toDate) {
+  return mutateRuntimeData((data) => {
+    const kilometerState = ensureKilometerState(data);
+    const now = new Date().toISOString();
+    const exportId = generateId('kmexport');
+    const rows = (kilometerState.travelLog || [])
+      .filter((item) => item?.abgerechnet !== true)
+      .filter((item) => isDateInRange(item.date, fromDate, toDate))
+      .sort((a, b) => compareDeDates(a?.date, b?.date) || String(a?.createdAt || '').localeCompare(String(b?.createdAt || ''), 'de'));
+
+    if (rows.length === 0) {
+      throw new Error('Keine nicht abgerechneten Fahrten im gewählten Zeitraum.');
+    }
+
+    const totalKm = rows.reduce((sum, item) => sum + (Number(item.km) || 0), 0);
+    const totalAmount = totalKm * 0.3;
+    const firstDate = rows[0]?.date || String(fromDate || '').trim();
+    const lastDate = rows[rows.length - 1]?.date || String(toDate || '').trim();
+    const fahrtIds = rows.map((item) => String(item.travelId || '')).filter(Boolean);
+
+    rows.forEach((item) => {
+      item.abgerechnet = true;
+      item.abgerechnetAm = getTodayDateString();
+      item.kmExportId = exportId;
+      item.updatedAt = now;
+    });
+
+    const exportItem = {
+      id: exportId,
+      von: String(fromDate || '').trim() || firstDate,
+      bis: String(toDate || '').trim() || lastDate,
+      erstesFahrtdatum: firstDate,
+      letztesFahrtdatum: lastDate,
+      erstelltAm: now,
+      gesamtKm: totalKm,
+      gesamtVerguetung: totalAmount,
+      fahrtIds
+    };
+
+    kilometerState.kmExports.push(exportItem);
+    return exportItem;
+  });
 }
 
 
@@ -606,6 +701,7 @@ export function createRezept(homeId, patientId, payload) {
       ausstell: (payload.ausstell || "").trim(),
       bg: !!payload.bg,
       dt: !!payload.dt,
+      abgegeben: false,
       items,
       entries: [],
       zeitMeta: {
@@ -647,6 +743,7 @@ export function updateRezept(homeId, patientId, rezeptId, payload) {
     rezept.ausstell = (payload.ausstell || "").trim();
     rezept.bg = !!payload.bg;
     rezept.dt = !!payload.dt;
+    rezept.abgegeben = rezept.abgegeben === true;
     rezept.items = items;
 
     if (!rezept.zeitMeta || typeof rezept.zeitMeta !== "object") {
@@ -670,6 +767,21 @@ export function updateRezept(homeId, patientId, rezeptId, payload) {
     }
 
     ensureRezeptTimeState(rezept);
+  });
+}
+
+export function markRezeptAbgegeben(homeId, patientId, rezeptId) {
+  mutateRuntimeData((data) => {
+    const home = getHomeById(data, homeId);
+    if (!home) throw new Error("Heim nicht gefunden");
+
+    const patient = getPatientById(home, patientId);
+    if (!patient) throw new Error("Patient nicht gefunden");
+
+    const rezept = getRezeptById(patient, rezeptId);
+    if (!rezept) throw new Error("Rezept nicht gefunden");
+
+    rezept.abgegeben = true;
   });
 }
 
@@ -744,15 +856,13 @@ export function createRezeptEntry(homeId, patientId, rezeptId, payload) {
     const entryId = generateId("entry");
     let linkedTimeEntryId = "";
     const entryDate = normalizeDateString(payload.date);
-    const todayDate = getTodayDateString();
     const autoMinutes = getAutomaticTreatmentMinutes(rezept);
-    const isTodayEntry = entryDate === todayDate;
     const alreadyCreditedToday = (rezept.timeEntries || []).some((item) => {
       const itemDate = normalizeDateString(item?.date);
       return item.type === "behandlung" && itemDate === entryDate;
     });
 
-    if (isTodayEntry && autoMinutes > 0 && !alreadyCreditedToday) {
+    if (autoMinutes > 0 && !alreadyCreditedToday) {
       const timeEntry = createTimeEntryObject({
         date: entryDate,
         minutes: autoMinutes,
@@ -769,6 +879,7 @@ export function createRezeptEntry(homeId, patientId, rezeptId, payload) {
     rezept.entries.push({
       entryId,
       date: entryDate,
+      behandlungsDatum: entryDate,
       text: (payload.text || "").trim(),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -888,6 +999,7 @@ export function buildAbgabeRows(data) {
   (data.homes || []).forEach((home) => {
     (home.patients || []).forEach((patient) => {
       (patient.rezepte || []).forEach((rezept) => {
+        if (rezept?.abgegeben === true) return;
         rows.push({
           rowId: `${home.homeId}_${patient.patientId}_${rezept.rezeptId}`,
           heim: home.name || "",
@@ -1194,6 +1306,7 @@ export function buildAbgabeTree(data) {
       const rezepte = [];
 
       (patient.rezepte || []).forEach((rezept) => {
+        if (rezept?.abgegeben === true) return;
         rezepte.push({
           rowId: `${home.homeId}_${patient.patientId}_${rezept.rezeptId}`,
           rezeptId: rezept.rezeptId,
@@ -1341,14 +1454,19 @@ export function deleteRezeptTimeEntry(homeId, patientId, rezeptId, timeEntryId) 
 }
 
 export function getRezeptTimeEntries(rezept) {
-  return [...(rezept?.timeEntries || [])].sort((a, b) =>
-    compareDeDates(String(b?.date || ""), String(a?.date || ""))
-    || String(b?.createdAt || "").localeCompare(String(a?.createdAt || ""), "de")
-  );
+  return [...(rezept?.timeEntries || [])]
+    .map((entry) => ({
+      ...entry,
+      minutes: getEffectiveRezeptTimeEntryMinutes(rezept, entry)
+    }))
+    .sort((a, b) =>
+      compareDeDates(String(b?.date || ""), String(a?.date || ""))
+      || String(b?.createdAt || "").localeCompare(String(a?.createdAt || ""), "de")
+    );
 }
 
 export function getRezeptTimeSummary(rezept) {
-  const entries = rezept?.timeEntries || [];
+  const entries = getRezeptTimeEntries(rezept);
   const totalMinutes = entries.reduce((sum, item) => sum + (Number(item.minutes) || 0), 0);
   const totalEntries = entries.length;
   return { totalMinutes, totalEntries };

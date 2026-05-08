@@ -53,6 +53,11 @@ function ensureWeeklyHours(value) {
   return "";
 }
 
+function ensureIntegerNumber(value, fallback = 0) {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? Math.round(numberValue) : fallback;
+}
+
 function normalizeEntry(entry) {
   const now = new Date().toISOString();
   const item = entry && typeof entry === "object" ? entry : {};
@@ -108,6 +113,7 @@ return {
   ausstell: getNormalizedRezeptAusstellungsdatum(source),
   bg: ensureBoolean(source.bg, false),
   dt: ensureBoolean(source.dt, false),
+  abgegeben: ensureBoolean(source.abgegeben, false),
   items,
   entries: ensureArray(source.entries).map(normalizeEntry),
   zeitMeta: source.zeitMeta && typeof source.zeitMeta === "object"
@@ -240,7 +246,21 @@ function normalizeKilometerState(state) {
       note: ensureString(item?.note),
       createdAt: ensureIsoString(item?.createdAt, new Date().toISOString()),
       updatedAt: ensureIsoString(item?.updatedAt),
-      manualAdjusted: Boolean(item?.manualAdjusted)
+      manualAdjusted: Boolean(item?.manualAdjusted),
+      abgerechnet: item?.abgerechnet === true,
+      abgerechnetAm: ensureString(item?.abgerechnetAm),
+      kmExportId: ensureString(item?.kmExportId)
+    })),
+    kmExports: ensureArray(source.kmExports).map((item) => ({
+      id: ensureString(item?.id) || generateId("kmexport"),
+      von: ensureDeDateString(item?.von),
+      bis: ensureDeDateString(item?.bis),
+      erstesFahrtdatum: ensureDeDateString(item?.erstesFahrtdatum),
+      letztesFahrtdatum: ensureDeDateString(item?.letztesFahrtdatum),
+      erstelltAm: ensureIsoString(item?.erstelltAm, new Date().toISOString()),
+      gesamtKm: Number.isFinite(Number(item?.gesamtKm)) ? Number(item.gesamtKm) : 0,
+      gesamtVerguetung: Number.isFinite(Number(item?.gesamtVerguetung)) ? Number(item.gesamtVerguetung) : 0,
+      fahrtIds: ensureArray(item?.fahrtIds).map((id) => ensureString(id)).filter(Boolean)
     }))
   };
 }
@@ -274,6 +294,22 @@ function normalizeSpecialDays(items) {
   }).filter((item) => item.date);
 }
 
+function normalizeStundenAbgleiche(items) {
+  return ensureArray(items).map((item) => {
+    const source = item && typeof item === "object" ? item : {};
+    const typ = ensureString(source.typ || source.type).trim().toLowerCase() === "frei" ? "frei" : "auszahlung";
+    const minuten = ensureIntegerNumber(source.minuten || source.minutes, 0);
+    return {
+      id: ensureString(source.id) || generateId("stundenabgleich"),
+      typ,
+      datum: ensureDeDateString(source.datum || source.date),
+      minuten: Math.max(0, Math.abs(minuten)),
+      notiz: ensureString(source.notiz || source.note),
+      createdAt: ensureIsoString(source.createdAt, new Date().toISOString()),
+      updatedAt: ensureIsoString(source.updatedAt, new Date().toISOString())
+    };
+  }).filter((item) => item.datum && item.minuten > 0);
+}
 
 function normalizeNachbestellHistory(items) {
   return ensureArray(items).map((item) => {
@@ -320,6 +356,8 @@ export function finalizeAppStructure(data) {
       practiceAddress: ensureString(settings.practiceAddress, PRACTICE_ADDRESS),
       workDays: ensureWorkDays(settings.workDays),
       weeklyHours: ensureWeeklyHours(settings.weeklyHours),
+      fastStartDatum: ensureString(settings.fastStartDatum),
+      stundenStartsaldoMinuten: ensureIntegerNumber(settings.stundenStartsaldoMinuten, 0),
       privacyMode: ["full", "privacy"].includes(settings.privacyMode) ? settings.privacyMode : "full",
       createdAt: ensureIsoString(settings.createdAt, now),
       updatedAt: ensureIsoString(settings.updatedAt, now) || now
@@ -345,6 +383,7 @@ export function finalizeAppStructure(data) {
 
     abwesenheiten: normalizeAbwesenheiten(source.abwesenheiten),
     specialDays: normalizeSpecialDays(source.specialDays),
+    stundenAbgleiche: normalizeStundenAbgleiche(source.stundenAbgleiche),
 
     abgabeHistory: normalizeAbgabeHistory(source.abgabeHistory),
     nachbestellHistory: normalizeNachbestellHistory(source.nachbestellHistory),

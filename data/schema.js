@@ -23,6 +23,8 @@ export function createEmptyAppData() {
       practiceAddress: PRACTICE_ADDRESS,
       workDays: [],
       weeklyHours: "",
+      fastStartDatum: "",
+      stundenStartsaldoMinuten: 0,
       privacyMode: "full",
       createdAt: now,
       updatedAt: now
@@ -50,11 +52,13 @@ export function createEmptyAppData() {
         address: ""
       },
       knownRoutes: [],
-      travelLog: []
+      travelLog: [],
+      kmExports: []
     },
 
     abwesenheiten: [],
     specialDays: [],
+    stundenAbgleiche: [],
 
     abgabeHistory: [],
     nachbestellHistory: [],

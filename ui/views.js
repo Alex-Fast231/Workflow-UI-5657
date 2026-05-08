@@ -25,6 +25,7 @@ import {
   deleteHome,
   createRezept,
   updateRezept,
+  markRezeptAbgegeben,
   deleteRezept,
   createRezeptEntry,
   updateRezeptEntry,
@@ -50,6 +51,7 @@ import {
   deleteRezeptTimeEntry,
   getRezeptTimeEntries,
   getRezeptTimeSummary,
+  getRezeptEntryAutoMinutes,
   getPendingKilometerContext,
   saveKilometerStartPoint,
   saveKnownKilometerRoute,
@@ -58,7 +60,8 @@ import {
   addManualKilometerTravel,
   updateKilometerTravel,
   deleteKilometerTravel,
-  getKilometerPeriodSummary
+  getKilometerPeriodSummary,
+  finalizeKilometerExport
 } from "../modules/homes.js";
 import { getRezeptFristInfo } from "../modules/fristen.js";
 import { exportBackup, importBackup, downloadBlob, validateBackupZip } from "../modules/backup.js";
@@ -135,6 +138,56 @@ function formatHoursClockLabel(minutes) {
   return `${h}:${String(m).padStart(2, "0")} Stunden`;
 }
 
+function getSignedMinutesLabel(minutes) {
+  const total = Number(minutes) || 0;
+  const sign = total < 0 ? "-" : "+";
+  const absolute = Math.abs(total);
+  const h = Math.floor(absolute / 60);
+  const m = absolute % 60;
+  return `${sign}${h}:${String(m).padStart(2, "0")} Stunden`;
+}
+
+function parseStundenStartsaldoInput(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return 0;
+  const normalized = raw.replace(",", ".");
+  const clockMatch = normalized.match(/^([+-])?\s*(\d{1,4})(?::(\d{1,2}))?$/);
+  if (clockMatch) {
+    const sign = clockMatch[1] === "-" ? -1 : 1;
+    const hours = Number(clockMatch[2]);
+    const minutes = Number(clockMatch[3] || 0);
+    if (!Number.isFinite(hours) || !Number.isFinite(minutes) || minutes >= 60) return null;
+    return sign * ((hours * 60) + minutes);
+  }
+  const decimalMatch = normalized.match(/^([+-])?\s*(\d{1,4})(?:\.(\d{1,2}))?$/);
+  if (!decimalMatch) return null;
+  const sign = decimalMatch[1] === "-" ? -1 : 1;
+  const hours = Number(`${decimalMatch[2]}.${decimalMatch[3] || "0"}`);
+  if (!Number.isFinite(hours)) return null;
+  return sign * Math.round(hours * 60);
+}
+
+function getStundenStartsaldoMinutes(settings) {
+  const value = Number(settings?.stundenStartsaldoMinuten || 0);
+  return Number.isFinite(value) ? Math.round(value) : 0;
+}
+
+function getFastStartDatumComparable(settings) {
+  const value = String(settings?.fastStartDatum || '').trim();
+  if (!value) return '';
+  return parseComparableDate(value) ? value : (parseDeDate(value) || '');
+}
+
+function getEffectiveTimeSummaryFromDate(fromDate, fastStartComparable) {
+  const requestedFrom = parseDeDate(fromDate);
+  if (requestedFrom && fastStartComparable) {
+    return formatDeDate(requestedFrom > fastStartComparable ? requestedFrom : fastStartComparable);
+  }
+  if (requestedFrom) return formatDeDate(requestedFrom);
+  if (fastStartComparable) return formatDeDate(fastStartComparable);
+  return String(fromDate || '').trim();
+}
+
 function formatComparableToDe(value) {
   return formatDeDate(value);
 }
@@ -162,6 +215,14 @@ function getSpecialDayRows(data) {
   return Array.isArray(data?.specialDays) ? data.specialDays : [];
 }
 
+function getStundenAbgleichRows(data) {
+  return Array.isArray(data?.stundenAbgleiche) ? data.stundenAbgleiche : [];
+}
+
+function getStundenAbgleichTypLabel(typ) {
+  return typ === "frei" ? "Überstundenfrei" : "Auszahlung";
+}
+
 function isComparableDateWithinAbsence(comparableDate, absence) {
   const from = parseDeDate(absence?.from);
   const to = parseDeDate(absence?.to);
@@ -185,7 +246,7 @@ function collectAllTimeEntries(data) {
     (home?.patients || []).forEach((patient) => {
       const patientName = `${patient?.lastName || ""}, ${patient?.firstName || ""}`.replace(/^,\s*/, "").trim() || 'Ohne Namen';
       (patient?.rezepte || []).forEach((rezept) => {
-        (rezept?.timeEntries || []).forEach((entry) => {
+        getRezeptTimeEntries(rezept).forEach((entry) => {
           const minutes = Number(entry?.minutes || 0);
           if (!Number.isFinite(minutes) || minutes <= 0) return;
           rows.push({
@@ -207,21 +268,28 @@ function collectAllTimeEntries(data) {
 
 function getTotalTrackedMinutes(data, targetDate = "") {
   const normalizedDate = String(targetDate || '').trim();
+  const fastStartComparable = getFastStartDatumComparable(data?.settings);
   return collectAllTimeEntries(data)
     .filter((entry) => !normalizedDate || entry.date === normalizedDate)
+    .filter((entry) => {
+      const entryComparable = parseDeDate(entry.date);
+      return !fastStartComparable || !entryComparable || entryComparable >= fastStartComparable;
+    })
     .reduce((sum, entry) => sum + entry.minutes, 0);
 }
 
 function getTimePeriodSummary(data, fromDate, toDate) {
+  const fastStartComparable = getFastStartDatumComparable(data?.settings);
+  const effectiveFromDate = getEffectiveTimeSummaryFromDate(fromDate, fastStartComparable);
   const rows = collectAllTimeEntries(data)
-    .filter((entry) => isDateInRange(entry.date, fromDate, toDate));
+    .filter((entry) => isDateInRange(entry.date, effectiveFromDate, toDate));
 
   const totalsByDate = new Map();
   rows.forEach((entry) => {
     totalsByDate.set(entry.date, (totalsByDate.get(entry.date) || 0) + entry.minutes);
   });
 
-  const periodDates = listComparableDatesInRange(fromDate, toDate);
+  const periodDates = listComparableDatesInRange(effectiveFromDate, toDate);
   const workDays = Array.isArray(data?.settings?.workDays) ? data.settings.workDays : [];
   const dailyPlannedMinutes = getDailyPlannedMinutes(data?.settings);
 
@@ -248,11 +316,17 @@ function getTimePeriodSummary(data, fromDate, toDate) {
 
   const totalMinutes = dailyRows.reduce((sum, row) => sum + row.totalMinutes, 0);
   const plannedMinutes = dailyRows.reduce((sum, row) => sum + row.plannedMinutes, 0);
-  const saldoMinutes = totalMinutes - plannedMinutes;
+  const appSaldoMinutes = totalMinutes - plannedMinutes;
+  const stundenStartsaldoMinuten = getStundenStartsaldoMinutes(data?.settings);
+  const stundenAbgleichRows = getStundenAbgleichRows(data)
+    .filter((item) => isDateInRange(item?.datum, effectiveFromDate, toDate))
+    .sort((a, b) => compareDeDates(a?.datum, b?.datum));
+  const stundenAbgleichMinuten = stundenAbgleichRows.reduce((sum, item) => sum + Math.max(0, Number(item?.minuten || 0)), 0);
+  const saldoMinutes = appSaldoMinutes + stundenStartsaldoMinuten - stundenAbgleichMinuten;
   const absenceRows = getAbsenceRows(data).filter((item) => {
     const from = parseDeDate(item?.from);
     const to = parseDeDate(item?.to);
-    const filterFrom = parseDeDate(fromDate);
+    const filterFrom = parseDeDate(effectiveFromDate);
     const filterTo = parseDeDate(toDate);
     if (!from || !to) return false;
     if (filterFrom && to < filterFrom) return false;
@@ -262,7 +336,7 @@ function getTimePeriodSummary(data, fromDate, toDate) {
 
   const specialDayRows = getSpecialDayRows(data).filter((item) => {
     const date = parseDeDate(item?.date);
-    const filterFrom = parseDeDate(fromDate);
+    const filterFrom = parseDeDate(effectiveFromDate);
     const filterTo = parseDeDate(toDate);
     if (!date) return false;
     if (filterFrom && date < filterFrom) return false;
@@ -272,10 +346,16 @@ function getTimePeriodSummary(data, fromDate, toDate) {
 
   return {
     fromDate: String(fromDate || '').trim(),
+    effectiveFromDate,
     toDate: String(toDate || '').trim(),
+    fastStartDatum: fastStartComparable ? formatDeDate(fastStartComparable) : '',
     totalMinutes,
     plannedMinutes,
+    appSaldoMinutes,
+    stundenStartsaldoMinuten,
+    stundenAbgleichMinuten,
     saldoMinutes,
+    stundenAbgleichRows,
     dailyRows,
     absenceRows,
     specialDayRows
@@ -323,6 +403,7 @@ function buildTimeOverviewPrintMarkup({ therapistName, summary }) {
     <div class="print-section">
       <div><strong>Therapeut:</strong> ${escapeHtml(therapistName || '—')}</div>
       <div><strong>Zeitraum:</strong> ${escapeHtml(summary.fromDate || '—')} bis ${escapeHtml(summary.toDate || '—')}</div>
+      <div><strong>FaSt-Startdatum:</strong> ${escapeHtml(summary.fastStartDatum || '—')}</div>
     </div>
 
     <div class="print-section">
@@ -331,7 +412,10 @@ function buildTimeOverviewPrintMarkup({ therapistName, summary }) {
         <tbody>
           <tr><th>Soll-Zeit</th><td>${escapeHtml(formatHoursClockLabel(summary.plannedMinutes))}</td></tr>
           <tr><th>Ist-Zeit</th><td>${escapeHtml(formatHoursClockLabel(summary.totalMinutes))}</td></tr>
-          <tr><th>Saldo</th><td>${escapeHtml(formatHoursClockLabel(Math.abs(summary.saldoMinutes)))} ${summary.saldoMinutes > 0 ? 'Plus' : summary.saldoMinutes < 0 ? 'Minus' : 'Ausgeglichen'}</td></tr>
+          <tr><th>Startsaldo vor App/FaSt</th><td>${escapeHtml(getSignedMinutesLabel(summary.stundenStartsaldoMinuten))}</td></tr>
+          <tr><th>Seit Start erfasst</th><td>${escapeHtml(formatHoursClockLabel(Math.abs(summary.appSaldoMinutes)))} ${summary.appSaldoMinutes > 0 ? 'Plus' : summary.appSaldoMinutes < 0 ? 'Minus' : 'Ausgeglichen'}</td></tr>
+          <tr><th>Abgeglichen</th><td>-${escapeHtml(formatHoursClockLabel(summary.stundenAbgleichMinuten || 0))}</td></tr>
+          <tr><th>Gesamt</th><td>${escapeHtml(formatHoursClockLabel(Math.abs(summary.saldoMinutes)))} ${summary.saldoMinutes > 0 ? 'Plus' : summary.saldoMinutes < 0 ? 'Minus' : 'Ausgeglichen'}</td></tr>
         </tbody>
       </table>
     </div>
@@ -401,7 +485,7 @@ function getDashboardTodayPatients(data, targetDate = formatCurrentDateShort()) 
           }
         });
 
-        (rezept?.timeEntries || []).forEach((entry) => {
+        getRezeptTimeEntries(rezept).forEach((entry) => {
           if (String(entry?.date || '').trim() !== normalizedDate) return;
           const minutes = Number(entry?.minutes || 0);
           if (Number.isFinite(minutes)) totalMinutesForDate += minutes;
@@ -418,6 +502,37 @@ function getDashboardTodayPatients(data, targetDate = formatCurrentDateShort()) 
     });
   });
   return rows.sort((a,b)=>collatorDE.compare(a.patientName,b.patientName));
+}
+
+function getDocumentationOverviewRows(data, targetDate = "") {
+  const normalizedDate = normalizeDeDateInput(String(targetDate || '').trim()) || String(targetDate || '').trim();
+  if (!normalizedDate || !parseDeDate(normalizedDate)) return [];
+
+  const rows = [];
+  (data?.homes || []).forEach((home) => {
+    (home?.patients || []).forEach((patient) => {
+      const entries = [];
+      (patient?.rezepte || []).forEach((rezept) => {
+        (rezept?.entries || []).forEach((entry) => {
+          if (String(entry?.date || '').trim() !== normalizedDate) return;
+          entries.push({
+            rezeptLabel: rezeptSummary(rezept),
+            text: entry?.text || ''
+          });
+        });
+      });
+
+      if (entries.length > 0) {
+        rows.push({
+          patientName: `${patient?.lastName || ""}, ${patient?.firstName || ""}`.replace(/^,\s*/, "").trim() || 'Ohne Namen',
+          homeName: home?.name || '',
+          entries
+        });
+      }
+    });
+  });
+
+  return rows.sort((a, b) => collatorDE.compare(a.patientName, b.patientName));
 }
 
 function getAllRezeptOptions(data) {
@@ -1125,6 +1240,14 @@ export function showSetupView({ onSuccess }) {
       <label for="weeklyHours">Arbeitsstunden pro Woche</label>
       <input id="weeklyHours" type="text" inputmode="decimal" autocomplete="off" placeholder="z. B. 20 oder 38.5">
 
+      <label for="fastStartDatum">Startdatum bei FaSt</label>
+      <input id="fastStartDatum" type="text" inputmode="numeric" autocomplete="off" placeholder="TT.MM.JJJJ">
+      <p class="muted">Ab diesem Datum werden Zeiten aus der App fürs Stundenkonto berücksichtigt.</p>
+
+      <label for="stundenStartsaldo">Startsaldo Stundenkonto</label>
+      <input id="stundenStartsaldo" type="text" inputmode="numeric" autocomplete="off" placeholder="z. B. +40:00 oder -12:30">
+      <p class="muted">Plus-/Minusstunden vor App-Einführung. Wird zum Stundenkonto addiert.</p>
+
       <label for="practicePassword">Praxispasswort</label>
       <input id="practicePassword" type="password" autocomplete="new-password">
 
@@ -1142,6 +1265,7 @@ export function showSetupView({ onSuccess }) {
   `);
 
   bindCheckChipToggles(app);
+  bindDateAutoFormat(document.getElementById("fastStartDatum"));
 
   document.getElementById("restoreBackupBtn").onclick = () => {
     document.getElementById("restoreBackupInput").click();
@@ -1168,6 +1292,9 @@ export function showSetupView({ onSuccess }) {
     const therapistFax = document.getElementById("therapistFax").value.trim();
     const workDays = WORK_DAY_OPTIONS.filter((day) => document.getElementById(`setupWorkDay-${day}`)?.checked);
     const weeklyHours = normalizeWeeklyHoursInput(document.getElementById("weeklyHours").value);
+    const fastStartDatumInput = document.getElementById("fastStartDatum").value.trim();
+    const fastStartDatum = fastStartDatumInput ? parseDeDate(fastStartDatumInput) : "";
+    const stundenStartsaldoMinuten = parseStundenStartsaldoInput(document.getElementById("stundenStartsaldo").value);
     const password = document.getElementById("practicePassword").value;
     const pin = document.getElementById("workflowPin").value;
     const pinRepeat = document.getElementById("workflowPinRepeat").value;
@@ -1178,6 +1305,16 @@ export function showSetupView({ onSuccess }) {
 
     if (!isValidWeeklyHours(weeklyHours)) {
       msg.textContent = "Die Arbeitsstunden pro Woche müssen als Zahl eingegeben werden, z. B. 20 oder 38.5.";
+      return;
+    }
+
+    if (fastStartDatumInput && !fastStartDatum) {
+      msg.textContent = "Das Startdatum bei FaSt muss im Format TT.MM.JJJJ eingegeben werden.";
+      return;
+    }
+
+    if (stundenStartsaldoMinuten === null) {
+      msg.textContent = "Der Startsaldo muss im Format +HH:MM oder -HH:MM eingegeben werden, z. B. +40:00.";
       return;
     }
 
@@ -1204,6 +1341,8 @@ export function showSetupView({ onSuccess }) {
       initialAppData.settings.therapistFax = therapistFax;
       initialAppData.settings.workDays = workDays;
       initialAppData.settings.weeklyHours = weeklyHours;
+      initialAppData.settings.fastStartDatum = fastStartDatum;
+      initialAppData.settings.stundenStartsaldoMinuten = stundenStartsaldoMinuten;
 
       const session = await setupSecurity({
         password,
@@ -1354,12 +1493,21 @@ export function showSettingsView({ onLock }) {
       <label for="settingsWeeklyHours">Arbeitsstunden pro Woche</label>
       <input id="settingsWeeklyHours" type="text" inputmode="decimal" autocomplete="off" value="${escapeHtml(settings.weeklyHours || "")}" placeholder="z. B. 20 oder 38.5">
 
+      <label for="settingsFastStartDatum">Startdatum bei FaSt</label>
+      <input id="settingsFastStartDatum" type="text" inputmode="numeric" autocomplete="off" value="${escapeHtml(formatDeDate(getFastStartDatumComparable(settings)))}" placeholder="TT.MM.JJJJ">
+      <p class="muted">Ab diesem Datum werden Zeiten aus der App fürs Stundenkonto berücksichtigt.</p>
+
+      <label for="settingsStundenStartsaldo">Startsaldo Stundenkonto</label>
+      <input id="settingsStundenStartsaldo" type="text" inputmode="numeric" autocomplete="off" value="${escapeHtml(getSignedMinutesLabel(getStundenStartsaldoMinutes(settings)).replace(' Stunden', ''))}" placeholder="z. B. +40:00 oder -12:30">
+      <p class="muted">Plus-/Minusstunden vor App-Einführung. Wird zum Stundenkonto addiert.</p>
+
       <button id="saveSettingsBtn">Änderungen speichern</button>
       <div id="settingsMessage"></div>
     </div>
   `);
 
   bindCheckChipToggles(app);
+  bindDateAutoFormat(document.getElementById("settingsFastStartDatum"));
 
   document.getElementById("backDashboardFromSettingsBtn").onclick = () => {
     showDashboardView({ onLock });
@@ -1372,6 +1520,9 @@ export function showSettingsView({ onLock }) {
     const therapistFax = document.getElementById("settingsTherapistFax").value.trim();
     const workDays = WORK_DAY_OPTIONS.filter((day) => document.getElementById(`settingsWorkDay-${day}`)?.checked);
     const weeklyHours = normalizeWeeklyHoursInput(document.getElementById("settingsWeeklyHours").value);
+    const fastStartDatumInput = document.getElementById("settingsFastStartDatum").value.trim();
+    const fastStartDatum = fastStartDatumInput ? parseDeDate(fastStartDatumInput) : "";
+    const stundenStartsaldoMinuten = parseStundenStartsaldoInput(document.getElementById("settingsStundenStartsaldo").value);
     const msg = document.getElementById("settingsMessage");
 
     msg.className = "error";
@@ -1379,6 +1530,16 @@ export function showSettingsView({ onLock }) {
 
     if (!isValidWeeklyHours(weeklyHours)) {
       msg.textContent = "Die Arbeitsstunden pro Woche müssen als Zahl eingegeben werden, z. B. 20 oder 38.5.";
+      return;
+    }
+
+    if (fastStartDatumInput && !fastStartDatum) {
+      msg.textContent = "Das Startdatum bei FaSt muss im Format TT.MM.JJJJ eingegeben werden.";
+      return;
+    }
+
+    if (stundenStartsaldoMinuten === null) {
+      msg.textContent = "Der Startsaldo muss im Format +HH:MM oder -HH:MM eingegeben werden, z. B. +40:00.";
       return;
     }
 
@@ -1390,6 +1551,8 @@ export function showSettingsView({ onLock }) {
         data.settings.therapistFax = therapistFax;
         data.settings.workDays = workDays;
         data.settings.weeklyHours = weeklyHours;
+        data.settings.fastStartDatum = fastStartDatum;
+        data.settings.stundenStartsaldoMinuten = stundenStartsaldoMinuten;
         data.settings.updatedAt = new Date().toISOString();
       });
 
@@ -1404,7 +1567,7 @@ export function showSettingsView({ onLock }) {
   };
 }
 
-export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo = "", showTimeOverview = false, showAbsenceForm = "", showHolidayForm = false } = {}) {
+export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo = "", showTimeOverview = false, showAbsenceForm = "", showHolidayForm = false, showAbgleichForm = false, showDokuOverview = false, dokuOverviewDate = "" } = {}) {
   bindLockButton(onLock);
   setCurrentView("dashboard");
 
@@ -1419,11 +1582,13 @@ export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo 
   const dashboardTodayPatients = getDashboardTodayPatients(runtimeData, todayDate);
   const absenceRows = timePeriodSummary.absenceRows;
   const specialDayRows = timePeriodSummary.specialDayRows;
+  const stundenAbgleichRows = timePeriodSummary.stundenAbgleichRows || [];
+  const dokuOverviewRows = getDocumentationOverviewRows(runtimeData, dokuOverviewDate);
 
   render(`
     ${renderDashboardHeaderCard({ therapistName })}
 
-    <details class="accordion" ${showTimeOverview || hasTimeSummaryFilter || showAbsenceForm || showHolidayForm ? 'open' : ''}>
+    <details class="accordion" ${showTimeOverview || hasTimeSummaryFilter || showAbsenceForm || showHolidayForm || showAbgleichForm || showDokuOverview || dokuOverviewDate ? 'open' : ''}>
       <summary>
         <span>Überblick</span>
         <span class="muted">Stunden</span>
@@ -1437,7 +1602,7 @@ export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo 
         <div class="row" style="margin-top:10px;">
           <button id="toggleDashboardTimeOverviewBtn" class="secondary">Zeitübersicht</button>
         </div>
-        <div id="dashboardTimeOverviewPanel" class="compact-card" style="margin-top:10px; display:${showTimeOverview || hasTimeSummaryFilter ? 'block' : 'none'};">
+        <div id="dashboardTimeOverviewPanel" class="compact-card" style="margin-top:10px; display:${showTimeOverview || hasTimeSummaryFilter || showAbgleichForm || showDokuOverview || dokuOverviewDate ? 'block' : 'none'};">
           <div style="font-weight:700; margin-bottom:10px;">Zeitübersicht</div>
           <label for="dashboardTimeSummaryFrom">Von</label>
           <input id="dashboardTimeSummaryFrom" type="text" value="${escapeHtml(timeSummaryFrom)}" placeholder="TT.MM.JJJJ" inputmode="numeric">
@@ -1445,14 +1610,45 @@ export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo 
           <label for="dashboardTimeSummaryTo">Bis</label>
           <input id="dashboardTimeSummaryTo" type="text" value="${escapeHtml(timeSummaryTo)}" placeholder="TT.MM.JJJJ" inputmode="numeric">
 
-          <div class="row">
-            <button id="openUrlaubBtn" class="secondary">Urlaub</button>
-            <button id="openKrankBtn" class="secondary">Krank</button>
-            <button id="openHolidayBtn" class="secondary">Feiertage</button>
+          <div style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px; margin-top:16px;">
+            <button id="openUrlaubBtn" class="secondary" style="margin-top:0;">Urlaub</button>
+            <button id="openKrankBtn" class="secondary" style="margin-top:0;">Krank</button>
+            <button id="openHolidayBtn" class="secondary" style="margin-top:0;">Feiertage</button>
           </div>
-          <div class="row">
-            <button id="runDashboardTimeSummaryBtn">Auswertung anzeigen</button>
-            <button id="printTimeOverviewBtn" class="secondary">Drucken</button>
+          <div style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; margin-top:12px;">
+            <button id="openAbgleichBtn" class="secondary" style="margin-top:0;">Stundenabgleich</button>
+            <button id="runDashboardTimeSummaryBtn" style="margin-top:0;">Auswertung anzeigen</button>
+          </div>
+          <div style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; margin-top:12px;">
+            <button id="openDokuOverviewBtn" class="secondary" style="margin-top:0;">Doku-Übersicht</button>
+            <button id="printTimeOverviewBtn" class="secondary" style="margin-top:0;">Drucken</button>
+          </div>
+
+          <div id="dashboardDokuOverviewPanel" class="compact-card" style="margin:12px 0 0 0; padding:10px; display:${showDokuOverview || dokuOverviewDate ? 'block' : 'none'};">
+            <div style="font-weight:600; margin-bottom:10px;">Doku-Übersicht nach Datum</div>
+            <label for="dashboardDokuOverviewDate">Datum</label>
+            <input id="dashboardDokuOverviewDate" type="text" value="${escapeHtml(dokuOverviewDate)}" placeholder="TT.MM.JJJJ" inputmode="numeric">
+            <div class="row">
+              <button id="runDokuOverviewBtn">Anzeigen</button>
+              <button id="clearDokuOverviewBtn" class="secondary">Leeren</button>
+            </div>
+            <div id="dashboardDokuOverviewMsg"></div>
+            <div class="list-stack" style="margin-top:12px;">
+              ${!dokuOverviewDate ? `<p class="muted" style="margin:0;">Bitte Datum auswählen.</p>` : dokuOverviewRows.length === 0 ? `<p class="muted" style="margin:0;">Keine Dokumentationen für dieses Datum gefunden.</p>` : dokuOverviewRows.map((row) => `
+                <div class="compact-card" style="margin:0; padding:12px;">
+                  <div style="font-weight:700; font-size:16px; margin-bottom:4px;">${escapeHtml(row.patientName)}</div>
+                  <div class="compact-meta" style="margin-bottom:8px;">${escapeHtml(row.homeName || '—')}</div>
+                  <div class="list-stack">
+                    ${row.entries.map((entry) => `
+                      <div class="compact-card" style="margin:0; padding:10px;">
+                        <div class="compact-meta" style="margin-bottom:4px;">${escapeHtml(entry.rezeptLabel || 'Rezept')}</div>
+                        <div>${escapeHtml(entry.text || '—')}</div>
+                      </div>
+                    `).join('')}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
           </div>
 
           <div id="dashboardAbsenceFormPanel" class="compact-card" style="margin:12px 0 0 0; padding:10px; display:${showAbsenceForm ? 'block' : 'none'};">
@@ -1482,51 +1678,112 @@ export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo 
             <div id="dashboardHolidayMsg"></div>
           </div>
 
+          <div id="dashboardAbgleichFormPanel" class="compact-card" style="margin:12px 0 0 0; padding:10px; display:${showAbgleichForm ? 'block' : 'none'};">
+            <div style="font-weight:600; margin-bottom:10px;">Stunden abgleichen</div>
+            <label for="dashboardAbgleichTyp">Art</label>
+            <select id="dashboardAbgleichTyp">
+              <option value="auszahlung">Auszahlung</option>
+              <option value="frei">Überstundenfrei</option>
+            </select>
+
+            <label for="dashboardAbgleichDatum">Datum</label>
+            <input id="dashboardAbgleichDatum" type="text" placeholder="TT.MM.JJJJ" inputmode="numeric">
+
+            <label for="dashboardAbgleichStunden">Stunden</label>
+            <input id="dashboardAbgleichStunden" type="text" inputmode="numeric" placeholder="z. B. 30:00">
+
+            <label for="dashboardAbgleichNotiz">Notiz</label>
+            <input id="dashboardAbgleichNotiz" type="text" placeholder="optional">
+
+            <div class="row">
+              <button id="saveDashboardAbgleichBtn">Abgleich speichern</button>
+              <button id="cancelDashboardAbgleichBtn" class="secondary">Abbrechen</button>
+            </div>
+            <div id="dashboardAbgleichMsg"></div>
+          </div>
+
           <div id="zeituebersicht-content" style="display:none;">
             ${buildTimeOverviewPrintMarkup({ therapistName, summary: timePeriodSummary })}
           </div>
 
           <div class="compact-card" style="margin-top:12px; padding:12px;">
             <div style="font-size:18px; font-weight:700; margin-bottom:6px;">Zeitsaldo</div>
+            <div class="compact-meta">Startdatum: ${escapeHtml(timePeriodSummary.fastStartDatum || '—')}</div>
+            <div class="compact-meta">Startsaldo vor App/FaSt: ${escapeHtml(getSignedMinutesLabel(timePeriodSummary.stundenStartsaldoMinuten))}</div>
+            <div class="compact-meta">Seit Start erfasst: ${escapeHtml(formatHoursClockLabel(Math.abs(timePeriodSummary.appSaldoMinutes)))} ${timePeriodSummary.appSaldoMinutes > 0 ? 'Plus' : timePeriodSummary.appSaldoMinutes < 0 ? 'Minus' : 'Ausgeglichen'}</div>
+            <div class="compact-meta">Abgeglichen: -${escapeHtml(formatHoursClockLabel(timePeriodSummary.stundenAbgleichMinuten || 0))}</div>
+            <div class="compact-meta">Gesamt: ${escapeHtml(formatHoursClockLabel(Math.abs(timePeriodSummary.saldoMinutes)))} ${timePeriodSummary.saldoMinutes > 0 ? 'Plus' : timePeriodSummary.saldoMinutes < 0 ? 'Minus' : 'Ausgeglichen'}</div>
             <div class="compact-meta">Geleistete Zeit: ${escapeHtml(formatHoursClockLabel(timePeriodSummary.totalMinutes))}</div>
             <div class="compact-meta">Sollzeit: ${escapeHtml(formatHoursClockLabel(timePeriodSummary.plannedMinutes))}</div>
-            <div class="compact-meta">Saldo: ${escapeHtml(formatHoursClockLabel(Math.abs(timePeriodSummary.saldoMinutes)))} ${timePeriodSummary.saldoMinutes > 0 ? 'Plus' : timePeriodSummary.saldoMinutes < 0 ? 'Minus' : 'Ausgeglichen'}</div>
             <div class="compact-meta">Zeitraum: ${escapeHtml(timePeriodSummary.fromDate || '—')} bis ${escapeHtml(timePeriodSummary.toDate || '—')}</div>
           </div>
 
-          <div class="compact-card" style="margin-top:12px; padding:12px;">
-            <div style="font-size:18px; font-weight:700; margin-bottom:12px;">Urlaub / Krank / Feiertage</div>
-            <div class="list-stack">
-              ${absenceRows.length === 0 && specialDayRows.length === 0 ? `<p class="muted" style="margin:0;">Keine Einträge im gewählten Zeitraum.</p>` : ''}
-              ${absenceRows.map((item) => `
-                <div class="compact-card" style="margin:0; padding:12px;">
-                  <div style="font-weight:700; font-size:16px; margin-bottom:4px;">${escapeHtml(item.type === 'krank' ? 'Krank' : 'Urlaub')}</div>
-                  <div class="compact-meta">${escapeHtml(item.from || '—')} bis ${escapeHtml(item.to || '—')}</div>
-                  <button class="delete-absence-btn secondary" data-absence-id="${escapeHtml(item.id || '')}" style="margin-top:12px; width:100%;">Löschen</button>
-                </div>
-              `).join('')}
-              ${specialDayRows.map((item) => `
-                <div class="compact-card" style="margin:0; padding:12px;">
-                  <div style="font-weight:700; font-size:16px; margin-bottom:4px;">Feiertag</div>
-                  <div class="compact-meta">${escapeHtml(item.date || '—')}</div>
-                  <button class="delete-special-day-btn secondary" data-special-day-id="${escapeHtml(item.id || '')}" style="margin-top:12px; width:100%;">Löschen</button>
-                </div>
-              `).join('')}
-            </div>
-          </div>
-
-          <div style="margin-top:10px;" class="list-stack">
-            ${timePeriodSummary.dailyRows.length === 0 ? `<p class="muted">Keine Zeiten im gewählten Zeitraum.</p>` : timePeriodSummary.dailyRows.map((row) => `
-              <div class="compact-card" style="margin:0; padding:10px;">
-                <div style="font-weight:600;">${escapeHtml(row.date || 'Ohne Datum')}</div>
-                <div class="compact-meta">Status: ${escapeHtml(getTimeOverviewStatusLabel(row))}</div>
-                <div class="compact-meta">Geleistet: ${escapeHtml(formatHoursClockLabel(row.totalMinutes))}</div>
-                <div class="compact-meta">Soll: ${escapeHtml(formatHoursClockLabel(row.plannedMinutes))}</div>
-                <div class="compact-meta">Saldo: ${escapeHtml(formatHoursClockLabel(Math.abs(row.saldoMinutes)))} ${row.saldoMinutes > 0 ? 'Plus' : row.saldoMinutes < 0 ? 'Minus' : 'Ausgeglichen'}</div>
-                ${row.absenceType ? `<div class="compact-meta">${escapeHtml(row.absenceType === 'krank' ? 'Krank' : 'Urlaub')} · neutral</div>` : row.isHoliday ? `<div class="compact-meta">Feiertag · neutral</div>` : row.isWorkDay ? `<div class="compact-meta">Arbeitstag</div>` : ''}
+          <details class="accordion" style="margin-top:12px;">
+            <summary>
+              <span>Stundenabgleiche</span>
+              <span class="muted">${escapeHtml(String(stundenAbgleichRows.length))}</span>
+            </summary>
+            <div class="accordion-body">
+              <div class="list-stack">
+                ${stundenAbgleichRows.length === 0 ? `<p class="muted" style="margin:0;">Keine Abgleiche im gewählten Zeitraum.</p>` : ''}
+                ${stundenAbgleichRows.map((item) => `
+                  <div class="compact-card" style="margin:0; padding:12px;">
+                    <div style="font-weight:700; font-size:16px; margin-bottom:4px;">${escapeHtml(getStundenAbgleichTypLabel(item.typ))}</div>
+                    <div class="compact-meta">${escapeHtml(item.datum || '—')} · -${escapeHtml(formatHoursClockLabel(item.minuten || 0))}</div>
+                    ${item.notiz ? `<div class="compact-meta">${escapeHtml(item.notiz)}</div>` : ''}
+                    <button class="delete-stunden-abgleich-btn secondary" data-abgleich-id="${escapeHtml(item.id || '')}" style="margin-top:12px; width:100%;">Löschen</button>
+                  </div>
+                `).join('')}
               </div>
-            `).join("")}
-          </div>
+            </div>
+          </details>
+
+          <details class="accordion" style="margin-top:12px;">
+            <summary>
+              <span>Urlaub / Krank / Feiertage</span>
+              <span class="muted">${escapeHtml(String(absenceRows.length + specialDayRows.length))}</span>
+            </summary>
+            <div class="accordion-body">
+              <div class="list-stack">
+                ${absenceRows.length === 0 && specialDayRows.length === 0 ? `<p class="muted" style="margin:0;">Keine Einträge im gewählten Zeitraum.</p>` : ''}
+                ${absenceRows.map((item) => `
+                  <div class="compact-card" style="margin:0; padding:12px;">
+                    <div style="font-weight:700; font-size:16px; margin-bottom:4px;">${escapeHtml(item.type === 'krank' ? 'Krank' : 'Urlaub')}</div>
+                    <div class="compact-meta">${escapeHtml(item.from || '—')} bis ${escapeHtml(item.to || '—')}</div>
+                    <button class="delete-absence-btn secondary" data-absence-id="${escapeHtml(item.id || '')}" style="margin-top:12px; width:100%;">Löschen</button>
+                  </div>
+                `).join('')}
+                ${specialDayRows.map((item) => `
+                  <div class="compact-card" style="margin:0; padding:12px;">
+                    <div style="font-weight:700; font-size:16px; margin-bottom:4px;">Feiertag</div>
+                    <div class="compact-meta">${escapeHtml(item.date || '—')}</div>
+                    <button class="delete-special-day-btn secondary" data-special-day-id="${escapeHtml(item.id || '')}" style="margin-top:12px; width:100%;">Löschen</button>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          </details>
+
+          <details class="accordion" style="margin-top:12px;">
+            <summary>
+              <span>Tageswerte</span>
+              <span class="muted">${escapeHtml(String(timePeriodSummary.dailyRows.length))}</span>
+            </summary>
+            <div class="accordion-body">
+              <div class="list-stack">
+                ${timePeriodSummary.dailyRows.length === 0 ? `<p class="muted" style="margin:0;">Keine Zeiten im gewählten Zeitraum.</p>` : timePeriodSummary.dailyRows.map((row) => `
+                  <div class="compact-card" style="margin:0; padding:10px;">
+                    <div style="font-weight:600;">${escapeHtml(row.date || 'Ohne Datum')}</div>
+                    <div class="compact-meta">Status: ${escapeHtml(getTimeOverviewStatusLabel(row))}</div>
+                    <div class="compact-meta">Geleistet: ${escapeHtml(formatHoursClockLabel(row.totalMinutes))}</div>
+                    <div class="compact-meta">Soll: ${escapeHtml(formatHoursClockLabel(row.plannedMinutes))}</div>
+                    <div class="compact-meta">Saldo: ${escapeHtml(formatHoursClockLabel(Math.abs(row.saldoMinutes)))} ${row.saldoMinutes > 0 ? 'Plus' : row.saldoMinutes < 0 ? 'Minus' : 'Ausgeglichen'}</div>
+                    ${row.absenceType ? `<div class="compact-meta">${escapeHtml(row.absenceType === 'krank' ? 'Krank' : 'Urlaub')} · neutral</div>` : row.isHoliday ? `<div class="compact-meta">Feiertag · neutral</div>` : row.isWorkDay ? `<div class="compact-meta">Arbeitstag</div>` : ''}
+                  </div>
+                `).join("")}
+              </div>
+            </div>
+          </details>
         </div>
         <details class="accordion" style="margin-top:10px;">
           <summary>
@@ -1634,11 +1891,15 @@ export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo 
   const dashboardAbsenceFrom = document.getElementById("dashboardAbsenceFrom");
   const dashboardAbsenceTo = document.getElementById("dashboardAbsenceTo");
   const dashboardHolidayDate = document.getElementById("dashboardHolidayDate");
+  const dashboardAbgleichDatum = document.getElementById("dashboardAbgleichDatum");
+  const dashboardDokuOverviewDate = document.getElementById("dashboardDokuOverviewDate");
   if (dashboardTimeSummaryFrom) bindDateAutoFormat(dashboardTimeSummaryFrom);
   if (dashboardTimeSummaryTo) bindDateAutoFormat(dashboardTimeSummaryTo);
   if (dashboardAbsenceFrom) bindDateAutoFormat(dashboardAbsenceFrom);
   if (dashboardAbsenceTo) bindDateAutoFormat(dashboardAbsenceTo);
   if (dashboardHolidayDate) bindDateAutoFormat(dashboardHolidayDate);
+  if (dashboardAbgleichDatum) bindDateAutoFormat(dashboardAbgleichDatum);
+  if (dashboardDokuOverviewDate) bindDateAutoFormat(dashboardDokuOverviewDate);
 
   const toggleDashboardTimeOverviewBtn = document.getElementById("toggleDashboardTimeOverviewBtn");
   if (toggleDashboardTimeOverviewBtn) {
@@ -1691,6 +1952,53 @@ export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo 
     };
   }
 
+  const openAbgleichBtn = document.getElementById("openAbgleichBtn");
+  if (openAbgleichBtn) {
+    openAbgleichBtn.onclick = () => {
+      const fromValue = document.getElementById("dashboardTimeSummaryFrom").value.trim();
+      const toValue = document.getElementById("dashboardTimeSummaryTo").value.trim();
+      showDashboardView({ onLock, timeSummaryFrom: fromValue, timeSummaryTo: toValue, showTimeOverview: true, showAbgleichForm: true });
+    };
+  }
+
+  const openDokuOverviewBtn = document.getElementById("openDokuOverviewBtn");
+  if (openDokuOverviewBtn) {
+    openDokuOverviewBtn.onclick = () => {
+      const fromValue = document.getElementById("dashboardTimeSummaryFrom").value.trim();
+      const toValue = document.getElementById("dashboardTimeSummaryTo").value.trim();
+      const dateValue = document.getElementById("dashboardDokuOverviewDate")?.value?.trim() || dokuOverviewDate || formatCurrentDateShort();
+      showDashboardView({ onLock, timeSummaryFrom: fromValue, timeSummaryTo: toValue, showTimeOverview: true, showDokuOverview: true, dokuOverviewDate: dateValue });
+    };
+  }
+
+  const runDokuOverviewBtn = document.getElementById("runDokuOverviewBtn");
+  if (runDokuOverviewBtn) {
+    runDokuOverviewBtn.onclick = () => {
+      const msg = document.getElementById("dashboardDokuOverviewMsg");
+      const fromValue = document.getElementById("dashboardTimeSummaryFrom").value.trim();
+      const toValue = document.getElementById("dashboardTimeSummaryTo").value.trim();
+      const rawDate = document.getElementById("dashboardDokuOverviewDate").value.trim();
+      const dateValue = normalizeDeDateInput(rawDate) || rawDate;
+      if (!parseDeDate(dateValue)) {
+        if (msg) {
+          msg.className = "error";
+          msg.textContent = "Bitte ein gültiges Datum eingeben.";
+        }
+        return;
+      }
+      showDashboardView({ onLock, timeSummaryFrom: fromValue, timeSummaryTo: toValue, showTimeOverview: true, showDokuOverview: true, dokuOverviewDate: dateValue });
+    };
+  }
+
+  const clearDokuOverviewBtn = document.getElementById("clearDokuOverviewBtn");
+  if (clearDokuOverviewBtn) {
+    clearDokuOverviewBtn.onclick = () => {
+      const fromValue = document.getElementById("dashboardTimeSummaryFrom").value.trim();
+      const toValue = document.getElementById("dashboardTimeSummaryTo").value.trim();
+      showDashboardView({ onLock, timeSummaryFrom: fromValue, timeSummaryTo: toValue, showTimeOverview: true, showDokuOverview: true, dokuOverviewDate: "" });
+    };
+  }
+
   const cancelDashboardAbsenceBtn = document.getElementById("cancelDashboardAbsenceBtn");
   if (cancelDashboardAbsenceBtn) {
     cancelDashboardAbsenceBtn.onclick = () => {
@@ -1706,6 +2014,15 @@ export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo 
       const fromValue = document.getElementById("dashboardTimeSummaryFrom").value.trim();
       const toValue = document.getElementById("dashboardTimeSummaryTo").value.trim();
       showDashboardView({ onLock, timeSummaryFrom: fromValue, timeSummaryTo: toValue, showTimeOverview: true, showHolidayForm: false });
+    };
+  }
+
+  const cancelDashboardAbgleichBtn = document.getElementById("cancelDashboardAbgleichBtn");
+  if (cancelDashboardAbgleichBtn) {
+    cancelDashboardAbgleichBtn.onclick = () => {
+      const fromValue = document.getElementById("dashboardTimeSummaryFrom").value.trim();
+      const toValue = document.getElementById("dashboardTimeSummaryTo").value.trim();
+      showDashboardView({ onLock, timeSummaryFrom: fromValue, timeSummaryTo: toValue, showTimeOverview: true, showAbgleichForm: false });
     };
   }
 
@@ -1752,6 +2069,51 @@ export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo 
   }
 
 
+  const saveDashboardAbgleichBtn = document.getElementById("saveDashboardAbgleichBtn");
+  if (saveDashboardAbgleichBtn) {
+    saveDashboardAbgleichBtn.onclick = async () => {
+      const msg = document.getElementById("dashboardAbgleichMsg");
+      const typ = document.getElementById("dashboardAbgleichTyp").value === "frei" ? "frei" : "auszahlung";
+      const datumValue = document.getElementById("dashboardAbgleichDatum").value.trim();
+      const stundenValue = document.getElementById("dashboardAbgleichStunden").value.trim();
+      const notiz = document.getElementById("dashboardAbgleichNotiz").value.trim();
+      const normalizedDate = parseDeDate(datumValue);
+      const minuten = Math.abs(parseStundenStartsaldoInput(stundenValue));
+      msg.className = "error";
+      msg.textContent = "";
+
+      if (!normalizedDate) {
+        msg.textContent = "Bitte ein gültiges Datum eingeben.";
+        return;
+      }
+
+      if (!Number.isFinite(minuten) || minuten <= 0) {
+        msg.textContent = "Bitte Stunden im Format HH:MM eingeben, z. B. 30:00.";
+        return;
+      }
+
+      try {
+        mutateRuntimeData((data) => {
+          if (!Array.isArray(data.stundenAbgleiche)) data.stundenAbgleiche = [];
+          data.stundenAbgleiche.push({
+            id: `stundenabgleich_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+            typ,
+            datum: datumValue,
+            minuten,
+            notiz,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          });
+        });
+        await queuePersistRuntimeData();
+        showDashboardView({ onLock, timeSummaryFrom: document.getElementById("dashboardTimeSummaryFrom").value.trim(), timeSummaryTo: document.getElementById("dashboardTimeSummaryTo").value.trim(), showTimeOverview: true, showAbgleichForm: false });
+      } catch (err) {
+        console.error(err);
+        msg.textContent = err?.message || "Abgleich konnte nicht gespeichert werden.";
+      }
+    };
+  }
+
   const saveDashboardHolidayBtn = document.getElementById("saveDashboardHolidayBtn");
   if (saveDashboardHolidayBtn) {
     saveDashboardHolidayBtn.onclick = async () => {
@@ -1796,6 +2158,19 @@ export function showDashboardView({ onLock, timeSummaryFrom = "", timeSummaryTo 
       }
     };
   }
+
+  document.querySelectorAll('.delete-stunden-abgleich-btn').forEach((button) => {
+    button.onclick = async () => {
+      const abgleichId = button.dataset.abgleichId || '';
+      if (!abgleichId) return;
+      if (!confirm('Diesen Stundenabgleich wirklich löschen?')) return;
+      mutateRuntimeData((data) => {
+        data.stundenAbgleiche = (data.stundenAbgleiche || []).filter((item) => item.id !== abgleichId);
+      });
+      await queuePersistRuntimeData();
+      showDashboardView({ onLock, timeSummaryFrom: document.getElementById("dashboardTimeSummaryFrom").value.trim(), timeSummaryTo: document.getElementById("dashboardTimeSummaryTo").value.trim(), showTimeOverview: true });
+    };
+  });
 
   document.querySelectorAll('.delete-absence-btn').forEach((button) => {
     button.onclick = async () => {
@@ -2162,6 +2537,7 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
         ${filteredPatients.length === 0 ? `<p class="muted">Keine passenden Patienten gefunden.</p>` : ""}
         ${filteredPatients.map(patient => {
           const rezepte = sortRezepteForDisplay(patient.rezepte || []);
+          const quickDocRezepte = rezepte.filter((rezept) => rezept.abgegeben !== true);
           return `
             <details class="accordion">
               <summary>
@@ -2221,17 +2597,21 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
                 </div>
 
                 <div id="patient-schnelldoku-${patient.patientId}" class="patient-inline-section" style="display:none; margin-bottom:12px;">
-                  <div class="compact-meta" style="margin-bottom:10px;">Datum wird automatisch gesetzt: ${escapeHtml(formatCurrentDateShort())}</div>
-                  ${rezepte.length === 0 ? `<p class="muted">Keine Rezepte für SchnellDoku vorhanden.</p>` : rezepte.length === 1 ? `
+                  <div class="compact-card" style="margin-bottom:10px;">
+                    <label for="quickDocDate-${patient.patientId}">Behandlungsdatum</label>
+                    <input id="quickDocDate-${patient.patientId}" class="quickDocDateInput" type="text" value="${escapeHtml(formatCurrentDateShort())}" placeholder="TT.MM.JJJJ" inputmode="numeric">
+                    <div class="compact-meta" style="margin-top:6px;">Dieses Datum gilt für die SchnellDoku und die automatische Zeitbuchung.</div>
+                  </div>
+                  ${quickDocRezepte.length === 0 ? `<p class="muted">Keine Rezepte für SchnellDoku vorhanden.</p>` : quickDocRezepte.length === 1 ? `
                     <div class="compact-card" style="margin-bottom:10px;">
-                      <div style="font-weight:600; margin-bottom:6px;">Zielrezept vom: ${escapeHtml(rezepte[0].ausstell || "—")}</div>
-                      <div class="compact-meta">${escapeHtml(rezeptSummary(rezepte[0]))}</div>
+                      <div style="font-weight:600; margin-bottom:6px;">Zielrezept vom: ${escapeHtml(quickDocRezepte[0].ausstell || "—")}</div>
+                      <div class="compact-meta">${escapeHtml(rezeptSummary(quickDocRezepte[0]))}</div>
                     </div>
                   ` : `
                     <div class="compact-card" style="margin-bottom:10px;">
                       <div style="font-weight:600; margin-bottom:6px;">Zielrezept auswählen</div>
                       <div class="list-stack">
-                        ${rezepte.map(rezept => `
+                        ${quickDocRezepte.map(rezept => `
                           <label class="check-chip quick-doc-chip" data-patient-id="${patient.patientId}" data-rezept-id="${rezept.rezeptId}" style="flex:1 1 auto;">
                             <input class="quickDocRezeptCheck" type="checkbox" data-patient-id="${patient.patientId}" data-rezept-id="${rezept.rezeptId}">
                             <span>
@@ -2248,7 +2628,7 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
                   <div class="compact-card" style="margin-bottom:10px; padding:14px;">
                     <textarea id="quickDocText-${patient.patientId}" rows="4" placeholder="Dokumentation direkt zum Rezept speichern" style="width:100%; border:none; outline:none; resize:vertical; background:transparent; font:inherit; color:inherit; min-height:96px;"></textarea>
                   </div>
-                  <button class="saveQuickDocBtn" data-patient-id="${patient.patientId}" ${rezepte.length===0?'disabled':''}>SchnellDoku speichern</button>
+                  <button class="saveQuickDocBtn" data-patient-id="${patient.patientId}" ${quickDocRezepte.length===0?'disabled':''}>SchnellDoku speichern</button>
                   <div id="quickDocMsg-${patient.patientId}"></div>
                 </div>
 
@@ -2413,6 +2793,8 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
     };
   });
 
+  document.querySelectorAll('.quickDocDateInput').forEach((input) => bindDateAutoFormat(input));
+
   document.querySelectorAll('.quickDocRezeptCheck').forEach((check) => {
     check.addEventListener('change', () => {
       if (!check.checked) return;
@@ -2427,7 +2809,7 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
     btn.onclick = async () => {
       const patientId = btn.dataset.patientId;
       const patient = getPatientById(home, patientId);
-      const rezepte = sortRezepteForDisplay(patient?.rezepte || []);
+      const rezepte = sortRezepteForDisplay(patient?.rezepte || []).filter((rezept) => rezept.abgegeben !== true);
       const msg = document.getElementById(`quickDocMsg-${patientId}`);
       const text = document.getElementById(`quickDocText-${patientId}`).value.trim();
 
@@ -2452,7 +2834,12 @@ export function showHomeDetailView({ onLock, homeId, searchText = "" }) {
       }
 
       try {
-        const quickDate = formatCurrentDateShort();
+        const dateInput = document.getElementById(`quickDocDate-${patientId}`);
+        const quickDate = normalizeDeDateInput(dateInput?.value || '') || formatCurrentDateShort();
+        if (!parseDeDate(quickDate)) {
+          msg.textContent = 'Bitte ein gültiges Behandlungsdatum im Format TT.MM.JJJJ eingeben.';
+          return;
+        }
         const pendingKm = getPendingKilometerContext(homeId, patientId, quickDate);
         if (pendingKm.needsKmInput) {
           const entered = window.prompt(`Bitte Entfernung eingeben:
@@ -3010,6 +3397,7 @@ export function showRezeptDetailView({ onLock, homeId, patientId, rezeptId }) {
         <p><strong>Ausstellungsdatum:</strong> ${escapeHtml(rezept.ausstell || "—")}</p>
         <p><strong>BG:</strong> ${rezept.bg ? "Ja" : "Nein"}</p>
         <p><strong>Doppeltermin:</strong> ${rezept.dt ? "Ja" : "Nein"}</p>
+        <p><strong>Abgegeben:</strong> ${rezept.abgegeben === true ? "Ja" : "Nein"}</p>
         <p><strong>Zeit gesamt:</strong> ${escapeHtml(formatMinutesLabel(timeSummary.totalMinutes))}</p>
         <p><strong>Zeit-Einträge:</strong> ${timeSummary.totalEntries}</p>
       </div>
@@ -3027,6 +3415,11 @@ export function showRezeptDetailView({ onLock, homeId, patientId, rezeptId }) {
         <p><strong>Gültig bis:</strong> ${escapeHtml(frist.validUntilText || "—")}</p>
       </div>
     </details>
+
+    <div class="card">
+      <h3>Rezeptstatus</h3>
+      ${rezept.abgegeben === true ? `<p class="muted">Dieses Rezept ist als abgegeben markiert und erscheint nicht mehr in der SchnellDoku.</p><button id="markRezeptAbgegebenBtn" class="secondary" disabled>Abgegeben ✓</button>` : `<p class="muted">Als abgegeben markierte Rezepte bleiben hier vollständig erhalten, verschwinden aber aus der SchnellDoku.</p><button id="markRezeptAbgegebenBtn" class="secondary">Rezept als abgegeben markieren</button>`}
+    </div>
 
     <div class="card">
       <h3>Dokumentation zu diesem Rezept</h3>
@@ -3053,7 +3446,7 @@ export function showRezeptDetailView({ onLock, homeId, patientId, rezeptId }) {
           <div class="card" style="margin-bottom:12px;padding:16px;">
             <p><strong>${escapeHtml(entry.date || "Ohne Datum")}</strong></p>
             <p>${escapeHtml(entry.text || "")}</p>
-            <p class="muted">Automatische Zeit: ${escapeHtml(formatMinutesLabel(entry.autoTimeMinutes || 0))}</p>
+            <p class="muted">Automatische Zeit: ${escapeHtml(formatMinutesLabel(getRezeptEntryAutoMinutes(rezept, entry)))}</p>
             <div class="row" style="margin-top:10px;">
               <button class="editEntryBtn secondary" data-entry-id="${entry.entryId}">Eintrag bearbeiten</button>
               <button class="deleteEntryBtn danger" data-entry-id="${entry.entryId}">Eintrag löschen</button>
@@ -3089,6 +3482,23 @@ export function showRezeptDetailView({ onLock, homeId, patientId, rezeptId }) {
   document.getElementById("backPatientBtn").onclick = () => {
     showPatientDetailView({ onLock, homeId, patientId });
   };
+
+  const markRezeptAbgegebenBtn = document.getElementById("markRezeptAbgegebenBtn");
+  if (markRezeptAbgegebenBtn && rezept.abgegeben !== true) {
+    markRezeptAbgegebenBtn.onclick = async () => {
+      const ok = window.confirm("Dieses Rezept als abgegeben markieren?\n\nEs verschwindet danach aus der SchnellDoku, bleibt aber in der großen Doku erhalten.");
+      if (!ok) return;
+
+      try {
+        markRezeptAbgegeben(homeId, patientId, rezeptId);
+        await queuePersistRuntimeData();
+        showRezeptDetailView({ onLock, homeId, patientId, rezeptId });
+      } catch (err) {
+        console.error(err);
+        alert(err?.message || "Rezept konnte nicht als abgegeben markiert werden.");
+      }
+    };
+  }
 
   bindDateAutoFormat(document.getElementById("entryDate"));
 
@@ -3443,6 +3853,11 @@ export function showAbgabeView({ onLock, searchText = "", selectedIds = [] }) {
         createdAt,
         snapshotHtml: bodyHtml
       });
+      chosenRows.forEach((row) => {
+        if (row.homeId && row.patientId && row.rezeptId) {
+          markRezeptAbgegeben(row.homeId, row.patientId, row.rezeptId);
+        }
+      });
       await queuePersistRuntimeData();
       showAbgabeView({ onLock, searchText, selectedIds: [] });
     } catch (err) {
@@ -3466,7 +3881,29 @@ export function showAbgabeView({ onLock, searchText = "", selectedIds = [] }) {
       createdAt: new Date().toISOString()
     });
 
-    openHtmlDocument("Abgabeliste", bodyHtml, { autoPrint: true });
+    const printWindow = openHtmlDocument("Abgabeliste", bodyHtml, { autoPrint: false });
+    if (!printWindow) return;
+
+    let statusUpdated = false;
+    printWindow.onafterprint = async () => {
+      if (statusUpdated) return;
+      statusUpdated = true;
+
+      try {
+        chosenRows.forEach((row) => {
+          if (row.homeId && row.patientId && row.rezeptId) {
+            markRezeptAbgegeben(row.homeId, row.patientId, row.rezeptId);
+          }
+        });
+        await queuePersistRuntimeData();
+        showAbgabeView({ onLock, searchText, selectedIds: [] });
+      } catch (err) {
+        console.error(err);
+        alert("Abgabeliste wurde erstellt, aber der Rezeptstatus konnte nicht automatisch auf abgegeben gesetzt werden.");
+      }
+    };
+
+    printWindow.print();
   };
 
   document.querySelectorAll('.abgabe-history-open-btn').forEach((button) => {
@@ -3767,6 +4204,17 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "", ed
     compareDeDates(String(b?.date || ""), String(a?.date || ""))
     || collatorDE.compare(String(b?.createdAt || ""), String(a?.createdAt || ""))
   );
+  const knownRouteMap = new Map();
+  (overview.knownRoutes || []).forEach((route) => {
+    const from = String(route?.fromPointId || "");
+    const to = String(route?.toPointId || "");
+    if (!from || !to) return;
+    const key = [from, to].sort().join("|");
+    if (!knownRouteMap.has(key)) knownRouteMap.set(key, route);
+  });
+  const knownRoutes = [...knownRouteMap.values()].sort((a, b) =>
+    collatorDE.compare(`${a.fromLabel || ""} ${a.toLabel || ""}`, `${b.fromLabel || ""} ${b.toLabel || ""}`)
+  );
   const editingItem = editTravelId ? travelLog.find((item) => item.travelId === editTravelId) || null : null;
   const formTitle = editingItem ? "Fahrt bearbeiten" : "Manuelle Fahrt ergänzen";
   const formHint = editingItem
@@ -3834,7 +4282,7 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "", ed
           <div class="compact-card">
             <div style="font-weight:600;">${escapeHtml(item.date || "Ohne Datum")} · ${escapeHtml(formatKm(item.km || 0))}</div>
             <div class="compact-meta">${escapeHtml(item.fromLabel || "—")} → ${escapeHtml(item.toLabel || "—")}</div>
-            <div class="compact-meta">Typ: ${item.source === "auto" ? "Automatisch" : "Manuell"}${item.manualAdjusted ? ' · manuell korrigiert' : ''}</div>
+            <div class="compact-meta">Typ: ${item.source === "auto" ? "Automatisch" : "Manuell"}${item.manualAdjusted ? ' · manuell korrigiert' : ''}${item.abgerechnet ? ` · abgerechnet am ${escapeHtml(item.abgerechnetAm || "—")}` : ''}</div>
             ${item.note ? `<div class="compact-meta">${escapeHtml(item.note)}</div>` : ""}
             <div class="row" style="margin-top:10px;">
               <button class="secondary editTravelBtn" data-travel-id="${escapeHtml(item.travelId || "")}">Fahrt bearbeiten</button>
@@ -3842,6 +4290,25 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "", ed
             </div>
           </div>
         `).join("")}
+      </div>
+    </details>
+
+    <details class="accordion">
+      <summary>
+        <span>Bekannte Strecken</span>
+        <span class="muted">${knownRoutes.length}</span>
+      </summary>
+      <div class="accordion-body">
+        ${knownRoutes.length === 0 ? `<p class="muted">Noch keine gespeicherten Strecken vorhanden.</p>` : ""}
+        ${knownRoutes.map((route, index) => `
+          <div class="compact-card">
+            <div style="font-weight:600;">${escapeHtml(route.fromLabel || "—")} → ${escapeHtml(route.toLabel || "—")}</div>
+            <label for="knownRouteKm${index}">Kilometer</label>
+            <input id="knownRouteKm${index}" type="number" min="0" step="0.1" value="${escapeHtml(String(route.km ?? ""))}" placeholder="z.B. 7.5">
+            <button class="secondary saveKnownRouteKmBtn" data-input-id="knownRouteKm${index}" data-from-point-id="${escapeHtml(route.fromPointId || "")}" data-to-point-id="${escapeHtml(route.toPointId || "")}" data-from-label="${escapeHtml(route.fromLabel || "")}" data-to-label="${escapeHtml(route.toLabel || "")}">Kilometer speichern</button>
+          </div>
+        `).join("")}
+        <div id="knownRoutesMsg"></div>
       </div>
     </details>
 
@@ -3884,9 +4351,10 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "", ed
           <div class="compact-meta">Gesamtkilometer: ${escapeHtml(formatKm(summary.totalKm))}</div>
           <div class="compact-meta">Vergütung: ${escapeHtml(formatEuro(summary.totalAmount))}</div>
           <div class="compact-meta">Zeitraum: ${escapeHtml(summary.fromDate || "—")} bis ${escapeHtml(summary.toDate || "—")}</div>
+          <div class="compact-meta">Es werden nur noch nicht abgerechnete Fahrten berücksichtigt.</div>
         </div>
 
-        ${summary.rows.length === 0 ? `<p class="muted" style="margin-top:10px;">Keine Fahrten im gewählten Zeitraum.</p>` : ""}
+        ${summary.rows.length === 0 ? `<p class="muted" style="margin-top:10px;">Keine offenen Fahrten im gewählten Zeitraum.</p>` : ""}
         ${summary.rows.map((item) => `
           <div class="compact-card">
             <div style="font-weight:600;">${escapeHtml(item.date || "Ohne Datum")} · ${escapeHtml(formatKm(item.km || 0))}</div>
@@ -3932,10 +4400,15 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "", ed
     showKilometerView({ onLock, summaryFrom: fromValue, summaryTo: toValue });
   };
 
-  document.getElementById("printKmSummaryBtn").onclick = () => {
+  document.getElementById("printKmSummaryBtn").onclick = async () => {
     const fromValue = document.getElementById("kmSummaryFrom").value.trim();
     const toValue = document.getElementById("kmSummaryTo").value.trim();
     const currentSummary = getKilometerPeriodSummary(fromValue, toValue);
+
+    if (currentSummary.rows.length === 0) {
+      alert("Keine offenen Fahrten im gewählten Zeitraum.");
+      return;
+    }
 
     printHtml(
       "Kilometerzettel",
@@ -3953,6 +4426,15 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "", ed
         `).join("")}
       `
     );
+
+    try {
+      finalizeKilometerExport(fromValue, toValue);
+      await queuePersistRuntimeData();
+      showKilometerView({ onLock, summaryFrom: fromValue, summaryTo: toValue });
+    } catch (err) {
+      console.error(err);
+      alert(err?.message || "Kilometerzettel konnte nicht abgeschlossen werden.");
+    }
   };
 
   document.getElementById("saveManualKmBtn").onclick = async () => {
@@ -3992,6 +4474,32 @@ export function showKilometerView({ onLock, summaryFrom = "", summaryTo = "", ed
   document.querySelectorAll(".editTravelBtn").forEach((btn) => {
     btn.onclick = () => {
       showKilometerView({ onLock, summaryFrom, summaryTo, editTravelId: btn.dataset.travelId || "" });
+    };
+  });
+
+  document.querySelectorAll(".saveKnownRouteKmBtn").forEach((btn) => {
+    btn.onclick = async () => {
+      const msg = document.getElementById("knownRoutesMsg");
+      if (msg) {
+        msg.className = "error";
+        msg.textContent = "";
+      }
+
+      try {
+        const input = document.getElementById(btn.dataset.inputId || "");
+        saveKnownKilometerRoute({
+          fromPointId: btn.dataset.fromPointId || "",
+          toPointId: btn.dataset.toPointId || "",
+          fromLabel: btn.dataset.fromLabel || "",
+          toLabel: btn.dataset.toLabel || "",
+          km: input ? input.value : ""
+        });
+        await queuePersistRuntimeData();
+        showKilometerView({ onLock, summaryFrom, summaryTo, editTravelId });
+      } catch (err) {
+        console.error(err);
+        if (msg) msg.textContent = err?.message || "Strecke konnte nicht gespeichert werden.";
+      }
     };
   });
 

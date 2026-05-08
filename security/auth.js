@@ -110,4 +110,3 @@ export async function verifyPracticePassword({ password, cryptoMeta }) {
     return false;
   }
 }
-
