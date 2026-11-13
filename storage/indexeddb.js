@@ -24,6 +24,18 @@ export function openDatabase() {
   return dbPromise;
 }
 
+// Die einmal geöffnete Verbindung bleibt für die gesamte Seitenlebensdauer
+// gecacht (siehe dbPromise oben) - ein anschließendes indexedDB.deleteDatabase()
+// (z.B. beim App-Zurücksetzen) blockiert sonst dauerhaft, weil der Browser
+// diese noch offene Verbindung erkennt (auch innerhalb desselben Tabs). Muss
+// vor jedem deleteDatabase()-Aufruf awaited werden.
+export async function closeDatabase() {
+  if (!dbPromise) return;
+  const db = await dbPromise.catch(() => null);
+  if (db) db.close();
+  dbPromise = null;
+}
+
 function withStore(mode, callback) {
   return openDatabase().then((db) => {
     return new Promise((resolve, reject) => {

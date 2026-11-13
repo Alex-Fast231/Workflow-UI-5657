@@ -16,8 +16,7 @@ export function appendSecurityLog(runtimeData, entry, maxEntries = 200) {
   if (!runtimeData.security || typeof runtimeData.security !== "object") {
     runtimeData.security = {
       log: [],
-      lastSecurityChangeAt: "",
-      privacyMode: "full"
+      lastSecurityChangeAt: ""
     };
   }
 

@@ -1,6 +1,7 @@
-export const AUTO_LOCK_MS = 2 * 60 * 1000;
+export const AUTO_LOCK_MS = 5 * 60 * 1000;
+export const BACKGROUND_LOCK_MS = 2 * 60 * 1000;
 export const MAX_FAILED_ATTEMPTS = 5;
-export const LOCKOUT_MS = 30 * 1000;
+export const LOCKOUT_MS = 5 * 60 * 1000;
 
 export function createDefaultSecurityState() {
   return {
@@ -72,6 +73,7 @@ export function registerSuccessfulUnlock(securityState, method = "pin", now = Da
 export function createAutoLockController(onLock) {
   let timer = null;
   let boundHandler = null;
+  let hiddenAt = null;
 
   function reset() {
     if (timer) clearTimeout(timer);
@@ -81,6 +83,7 @@ export function createAutoLockController(onLock) {
   }
 
   function start() {
+    hiddenAt = null;
     reset();
   }
 
@@ -89,6 +92,14 @@ export function createAutoLockController(onLock) {
     timer = null;
   }
 
+  // WICHTIG: setTimeout allein ist hier nicht zuverlässig. Sobald die App
+  // (besonders als installierte PWA auf Android) in den Hintergrund geht
+  // oder minimiert wird, kann das Betriebssystem den JavaScript-Hauptthread
+  // komplett pausieren/einfrieren - ein laufender Timer feuert dann erst
+  // (verspätet) beim Zurückkehren, oder gar nicht. Deswegen wird zusätzlich
+  // beim Verstecken ein Zeitstempel gespeichert; beim Zurückkehren wird die
+  // TATSÄCHLICH verstrichene Zeit nachträglich geprüft (Date.now() läuft
+  // immer korrekt weiter, unabhängig davon ob Timer pausiert waren).
   function bindActivityEvents() {
     if (boundHandler) return;
     boundHandler = () => reset();
@@ -99,8 +110,18 @@ export function createAutoLockController(onLock) {
 
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) {
-        onLock();
+        hiddenAt = Date.now();
+        // Timer bleibt zusätzlich gesetzt für den Fall, dass er doch feuert
+        // (z.B. wenn die Seite nur kurz inaktiv, aber nicht eingefroren war).
       } else {
+        if (hiddenAt !== null) {
+          const elapsed = Date.now() - hiddenAt;
+          hiddenAt = null;
+          if (elapsed >= BACKGROUND_LOCK_MS) {
+            onLock();
+            return;
+          }
+        }
         reset();
       }
     });

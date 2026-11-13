@@ -1,6 +1,6 @@
 {
-  "name": "FaSt-Doku",
-  "short_name": "FaSt-Doku",
+  "name": "FaSt App",
+  "short_name": "FaSt App",
   "start_url": ".",
   "display": "standalone",
   "background_color": "#f1f5f9",

@@ -103,12 +103,18 @@ export async function exportKeyRaw(cryptoKey) {
   return new Uint8Array(raw);
 }
 
-export async function importKeyRaw(rawKeyBytes) {
+// extractable ist standardmäßig false (Sicherheits-Default für den
+// normalen Laufzeit-Schlüssel nach dem Entsperren - verhindert, dass der
+// rohe Schlüssel z.B. über eine XSS-Lücke ausgelesen werden könnte). Nur für
+// den einmaligen "PIN ändern"-Vorgang (siehe security/auth.js: changePIN())
+// wird hier bewusst extractable=true übergeben, da der Schlüssel dafür kurz
+// erneut exportiert werden muss, um ihn mit der neuen PIN zu umschließen.
+export async function importKeyRaw(rawKeyBytes, extractable = false) {
   return crypto.subtle.importKey(
     "raw",
     rawKeyBytes,
     { name: "AES-GCM", length: 256 },
-    false,
+    extractable,
     ["encrypt", "decrypt"]
   );
 }

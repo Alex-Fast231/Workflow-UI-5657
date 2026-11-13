@@ -1,5 +1,5 @@
 import { createEmptyAppData, APP_SCHEMA_VERSION, APP_VERSION, APP_MODULE, PRACTICE_ADDRESS } from "./schema.js";
-import { formatDeDate, parseDeDate } from "../core/date-utils.js";
+import { formatDeDate, parseDeDate, compareDeDates } from "../core/date-utils.js";
 import { generateId, getRezeptAusstellungsdatum } from "../core/utils.js";
 
 function ensureString(value, fallback = "") {
@@ -8,6 +8,10 @@ function ensureString(value, fallback = "") {
 
 function ensureBoolean(value, fallback = false) {
   return typeof value === "boolean" ? value : fallback;
+}
+
+function ensureJaNein(value) {
+  return value === "ja" || value === "nein" ? value : "";
 }
 
 function ensureArray(value) {
@@ -73,6 +77,14 @@ function normalizeEntry(entry) {
   };
 }
 
+// Defensiv beim Laden: SchnellDoku-Einträge chronologisch sortieren
+// (frühestes Datum zuerst), unabhängig von der ursprünglichen
+// Eingabe-Reihenfolge - z.B. für Backups/Importe, die vor der Sortierung
+// beim Speichern (siehe modules/homes.js: createRezeptEntry) entstanden sind.
+function sortEntriesChronologically(entries) {
+  return [...entries].sort((a, b) => compareDeDates(a?.date, b?.date));
+}
+
 function normalizeItem(item) {
   const source = item && typeof item === "object" ? item : {};
   const type = ensureString(source.type).trim();
@@ -113,9 +125,17 @@ return {
   ausstell: getNormalizedRezeptAusstellungsdatum(source),
   bg: ensureBoolean(source.bg, false),
   dt: ensureBoolean(source.dt, false),
+  dringend: ensureBoolean(source.dringend, false),
+  icd10: ensureString(source.icd10),
+  icd10b: ensureString(source.icd10b),
+  leitsymptomatik: ensureString(source.leitsymptomatik),
+  hausbesuch: ensureJaNein(source.hausbesuch),
+  arztStempel: ensureJaNein(source.arztStempel),
+  arztUnterschrift: ensureJaNein(source.arztUnterschrift),
+  privat: ensureBoolean(source.privat, false),
   abgegeben: ensureBoolean(source.abgegeben, false),
   items,
-  entries: ensureArray(source.entries).map(normalizeEntry),
+  entries: sortEntriesChronologically(ensureArray(source.entries).map(normalizeEntry)),
   zeitMeta: source.zeitMeta && typeof source.zeitMeta === "object"
     ? source.zeitMeta
     : {
@@ -153,11 +173,244 @@ return {
     return {
       reportId: ensureString(report.reportId || report.id) || generateId("report"),
       content: ensureString(report.content || report.text),
+      therapieziele: ensureArray(report.therapieziele).map((v) => ensureString(v)).filter(Boolean),
+      therapiezielFreitext: ensureString(report.therapiezielFreitext),
+      compliance: ensureEnum(report.compliance, ["gut", "eingeschraenkt", "nicht_vorhanden", "keine_angabe"], ""),
+      complianceFreitext: ensureString(report.complianceFreitext),
+      verlauf: ensureEnum(report.verlauf, ["verbessert", "stabil", "status_quo", "verschlechtert"], ""),
+      verlaufFreitext: ensureString(report.verlaufFreitext),
+      therapieWeiterfuehren: ensureEnum(report.therapieWeiterfuehren, ["ja", "nein"], ""),
+      therapieNutzen: ensureEnum(report.therapieNutzen, ["ja", "nein", "teilweise"], ""),
+      therapieText: ensureString(report.therapieText),
+      bemerkungen: ensureString(report.bemerkungen),
       createdAt: ensureIsoString(report.createdAt, now),
       updatedAt: ensureIsoString(report.updatedAt, now)
     };
   })
 };
+}
+
+function normalizeDiagnoseZuordnung(item) {
+  const source = item && typeof item === "object" ? item : {};
+  return {
+    id: ensureString(source.id) || generateId("diagzuordnung"),
+    input: ensureString(source.input),
+    icd10: ensureString(source.icd10),
+    gruppe: ensureString(source.gruppe),
+    gruppeLabel: ensureString(source.gruppeLabel),
+    empfehlung: ensureString(source.empfehlung),
+    createdAt: ensureIsoString(source.createdAt, new Date().toISOString())
+  };
+}
+
+function ensureZuzahlungsstatus(value) {
+  return ["ja", "nein", "ungeklaert"].includes(value) ? value : "";
+}
+
+function ensureComparableDateString(value) {
+  const raw = String(value || "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "";
+}
+
+function ensureEnum(value, allowed, fallback = "") {
+  return allowed.includes(value) ? value : fallback;
+}
+
+function ensureNullableInt(value, min, max) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const rounded = Math.round(n);
+  if (min !== undefined && rounded < min) return null;
+  if (max !== undefined && rounded > max) return null;
+  return rounded;
+}
+
+function ensureNullableFloat(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function normalizeBbs7Items(items) {
+  const source = items && typeof items === "object" ? items : {};
+  const result = {};
+  ["sitzenZuStehen", "freiesStehen", "freiesSitzen", "stehenZuSitzen", "transfer", "augenGeschlossen", "tandemstand"].forEach((key) => {
+    const entry = source[key] && typeof source[key] === "object" ? source[key] : {};
+    result[key] = {
+      score: ensureNullableInt(entry.score, 0, 4),
+      nichtDurchfuehrbar: ensureBoolean(entry.nichtDurchfuehrbar, false)
+    };
+  });
+  return result;
+}
+
+const BBS_ITEM_KEYS = [
+  "sitzenZuStehen", "freiesStehen", "freiesSitzen", "stehenZuSitzen", "transfer",
+  "augenGeschlossen", "fuesseZusammen", "reichweite", "gegenstandAufheben", "umschauen",
+  "drehung360", "stufeWechsel", "tandemstand", "einbeinstand"
+];
+
+function normalizeBbs14Items(items) {
+  const source = items && typeof items === "object" ? items : {};
+  const result = {};
+  BBS_ITEM_KEYS.forEach((key) => {
+    const entry = source[key] && typeof source[key] === "object" ? source[key] : {};
+    result[key] = {
+      score: ensureNullableInt(entry.score, 0, 4),
+      nichtDurchfuehrbar: ensureBoolean(entry.nichtDurchfuehrbar, false)
+    };
+  });
+  return result;
+}
+
+function normalizeMrcGruppen(gruppen) {
+  const source = gruppen && typeof gruppen === "object" ? gruppen : {};
+  const result = {};
+  ["schulter", "ellbogen", "huefte", "knie"].forEach((key) => {
+    const entry = source[key] && typeof source[key] === "object" ? source[key] : {};
+    result[key] = {
+      links: ensureNullableInt(entry.links, 0, 5),
+      rechts: ensureNullableInt(entry.rechts, 0, 5)
+    };
+  });
+  return result;
+}
+
+function normalizeRomListe(list, allowedKeys) {
+  return ensureArray(list)
+    .map((item) => ({
+      gelenk: ensureString(item?.gelenk),
+      bewertung: ensureEnum(item?.bewertung, ["frei", "eingeschraenkt", "aufgehoben"], "")
+    }))
+    .filter((item) => item.gelenk && (!allowedKeys || allowedKeys.includes(item.gelenk)));
+}
+
+function normalizeBesdValues(besd) {
+  const source = besd && typeof besd === "object" ? besd : {};
+  const result = {};
+  ["atmung", "lautaeusserungen", "gesichtsausdruck", "koerpersprache", "trost"].forEach((key) => {
+    result[key] = ensureNullableInt(source[key], 0, 2);
+  });
+  return result;
+}
+
+function normalizeAssessment(item) {
+  const source = item && typeof item === "object" ? item : {};
+  const ebene0Source = source.ebene0 && typeof source.ebene0 === "object" ? source.ebene0 : {};
+  const orientierungSource = ebene0Source.orientierung && typeof ebene0Source.orientierung === "object" ? ebene0Source.orientierung : {};
+  const barthelSource = source.barthel && typeof source.barthel === "object" ? source.barthel : {};
+  const tugSource = source.tug && typeof source.tug === "object" ? source.tug : {};
+  const neuroSource = source.neuro && typeof source.neuro === "object" ? source.neuro : {};
+  const bbs7Source = neuroSource.bbs7 && typeof neuroSource.bbs7 === "object" ? neuroSource.bbs7 : {};
+  const rmiSource = neuroSource.rmi && typeof neuroSource.rmi === "object" ? neuroSource.rmi : {};
+  const mrcNeuroSource = neuroSource.mrc && typeof neuroSource.mrc === "object" ? neuroSource.mrc : {};
+  const orthoSource = source.ortho && typeof source.ortho === "object" ? source.ortho : {};
+  const sppbSource = orthoSource.sppb && typeof orthoSource.sppb === "object" ? orthoSource.sppb : {};
+  const sppbBalanceSource = sppbSource.balance && typeof sppbSource.balance === "object" ? sppbSource.balance : {};
+  const schmerzLokSource = orthoSource.schmerzLokalisation && typeof orthoSource.schmerzLokalisation === "object" ? orthoSource.schmerzLokalisation : {};
+  const schwerstSource = source.schwerst && typeof source.schwerst === "object" ? source.schwerst : {};
+  const mrcSchwerstSource = schwerstSource.mrc && typeof schwerstSource.mrc === "object" ? schwerstSource.mrc : {};
+  const kontrakturenSource = schwerstSource.kontrakturen && typeof schwerstSource.kontrakturen === "object" ? schwerstSource.kontrakturen : {};
+
+  return {
+    id: ensureString(source.id) || generateId("assessment"),
+    date: ensureComparableDateString(source.date),
+    content: ensureString(source.content),
+    createdAt: ensureIsoString(source.createdAt, new Date().toISOString()),
+
+    ebene0: {
+      orientierung: {
+        zeitlich: ensureBoolean(orientierungSource.zeitlich, false),
+        oertlich: ensureBoolean(orientierungSource.oertlich, false),
+        person: ensureBoolean(orientierungSource.person, false),
+        situation: ensureBoolean(orientierungSource.situation, false),
+        nicht: ensureBoolean(orientierungSource.nicht, false)
+      },
+      gedaechtnis: ensureEnum(ebene0Source.gedaechtnis, ["unauffaellig", "kurzzeit", "langzeit", "nicht_beurteilbar"], ""),
+      kommunikation: ensureEnum(ebene0Source.kommunikation, ["verbal", "verbal_eingeschraenkt", "nonverbal", "nicht_moeglich"], ""),
+      kooperation: ensureEnum(ebene0Source.kooperation, ["gut", "eingeschraenkt", "nicht_moeglich"], "")
+    },
+
+    barthel: {
+      essen: ensureNullableInt(barthelSource.essen, 0, 10),
+      baden: ensureNullableInt(barthelSource.baden, 0, 5),
+      koerperpflege: ensureNullableInt(barthelSource.koerperpflege, 0, 5),
+      ankleiden: ensureNullableInt(barthelSource.ankleiden, 0, 10),
+      stuhlkontinenz: ensureNullableInt(barthelSource.stuhlkontinenz, 0, 10),
+      harnkontinenz: ensureNullableInt(barthelSource.harnkontinenz, 0, 10),
+      toilette: ensureNullableInt(barthelSource.toilette, 0, 10),
+      transfer: ensureNullableInt(barthelSource.transfer, 0, 15),
+      gehen: ensureNullableInt(barthelSource.gehen, 0, 15),
+      treppen: ensureNullableInt(barthelSource.treppen, 0, 10)
+    },
+
+    schmerzTyp: ensureEnum(source.schmerzTyp, ["nrs", "besd"], "nrs"),
+    nrs: ensureNullableInt(source.nrs, 0, 10),
+    nrsNichtBeurteilbar: ensureBoolean(source.nrsNichtBeurteilbar, false),
+    besd: normalizeBesdValues(source.besd),
+
+    tug: {
+      sekunden: ensureNullableFloat(tugSource.sekunden),
+      hilfsmittel: ensureString(tugSource.hilfsmittel),
+      nichtDurchfuehrbar: ensureBoolean(tugSource.nichtDurchfuehrbar, false)
+    },
+
+    weiche: ensureEnum(source.weiche, ["neurologisch", "orthopaedisch", "schwerstbetroffen", "bbs"], ""),
+
+    bbs14: normalizeBbs14Items(source.bbs14),
+
+    neuro: {
+      bbs7: normalizeBbs7Items(bbs7Source),
+      rmi: {
+        antworten: ensureArray(rmiSource.antworten).map((v) => !!v),
+        beobachtung: ensureBoolean(rmiSource.beobachtung, false)
+      },
+      mrc: {
+        position: ensureEnum(mrcNeuroSource.position, ["sitzen", "liegen"], ""),
+        gruppen: normalizeMrcGruppen(mrcNeuroSource.gruppen),
+        spastik: ensureEnum(mrcNeuroSource.spastik, ["nein", "links", "rechts", "beidseitig"], ""),
+        nichtDurchfuehrbar: ensureBoolean(mrcNeuroSource.nichtDurchfuehrbar, false)
+      }
+    },
+
+    ortho: {
+      sppb: {
+        balance: {
+          seitNebeneinanderSek: ensureNullableFloat(sppbBalanceSource.seitNebeneinanderSek),
+          semitandemSek: ensureNullableFloat(sppbBalanceSource.semitandemSek),
+          tandemSek: ensureNullableFloat(sppbBalanceSource.tandemSek),
+          nichtMoeglich: ensureBoolean(sppbBalanceSource.nichtMoeglich, false)
+        },
+        gehgeschwindigkeitSek: ensureNullableFloat(sppbSource.gehgeschwindigkeitSek),
+        hilfsmittel: ensureString(sppbSource.hilfsmittel),
+        chairStandSek: ensureNullableFloat(sppbSource.chairStandSek),
+        chairStandNichtMoeglich: ensureBoolean(sppbSource.chairStandNichtMoeglich, false)
+      },
+      schmerzLokalisation: {
+        zonen: ensureArray(schmerzLokSource.zonen).map((z) => ensureString(z)).filter(Boolean),
+        qualitaet: ensureArray(schmerzLokSource.qualitaet).map((q) => ensureString(q)).filter(Boolean)
+      },
+      romAktiv: normalizeRomListe(orthoSource.romAktiv)
+    },
+
+    schwerst: {
+      mrc: {
+        gruppen: normalizeMrcGruppen(mrcSchwerstSource.gruppen),
+        spastik: ensureEnum(mrcSchwerstSource.spastik, ["nein", "links", "rechts", "beidseitig"], ""),
+        nichtDurchfuehrbar: ensureBoolean(mrcSchwerstSource.nichtDurchfuehrbar, false)
+      },
+      kontrakturen: {
+        vorhanden: ensureBoolean(kontrakturenSource.vorhanden, false),
+        liste: ensureArray(kontrakturenSource.liste).map((k) => ensureString(k)).filter(Boolean)
+      },
+      dekubitusrisiko: ensureEnum(schwerstSource.dekubitusrisiko, ["ja", "nein"], ""),
+      besd: normalizeBesdValues(schwerstSource.besd),
+      romPassiv: normalizeRomListe(schwerstSource.romPassiv),
+      schmerzBeiBewegung: ensureBoolean(schwerstSource.schmerzBeiBewegung, false),
+      spastikWiderstand: ensureBoolean(schwerstSource.spastikWiderstand, false)
+    }
+  };
 }
 
 function normalizePatient(patient) {
@@ -167,13 +420,29 @@ function normalizePatient(patient) {
     patientId: ensureString(source.patientId || source.id) || generateId("patient"),
     firstName: ensureString(source.firstName),
     lastName: ensureString(source.lastName),
+    anrede: ensureEnum(source.anrede, ["frau", "herr"], ""),
     birthDate: ensureDeDateString(source.birthDate),
     befreit: ensureBoolean(source.befreit, false),
-    hb: ensureBoolean(source.hb, false),
     verstorben: ensureBoolean(source.verstorben, false),
+    ausgeschieden: ensureBoolean(source.ausgeschieden, false),
+    zuzahlungsstatus: ensureZuzahlungsstatus(source.zuzahlungsstatus),
+    zuzahlungsstatusSetAt: ensureIsoString(source.zuzahlungsstatusSetAt),
+    zuzahlungReminderAt: ensureIsoString(source.zuzahlungReminderAt),
+    assessments: ensureArray(source.assessments).map(normalizeAssessment),
+    nextAssessmentDueAt: ensureComparableDateString(source.nextAssessmentDueAt),
+    assessmentMrcPosition: ensureEnum(source.assessmentMrcPosition, ["sitzen", "liegen"], ""),
     entries: ensureArray(source.entries).map(normalizeEntry),
     rezepte: ensureArray(source.rezepte).map(normalizeRezept),
-    zeitMeta: source.zeitMeta && typeof source.zeitMeta === "object" ? source.zeitMeta : {}
+    diagnoseZuordnung: ensureArray(source.diagnoseZuordnung).map(normalizeDiagnoseZuordnung),
+    zeitMeta: source.zeitMeta && typeof source.zeitMeta === "object" ? source.zeitMeta : {},
+    // Zwischenstand eines noch nicht fertig ausgefüllten Assessment-Wizards
+    // (siehe modules/homes.js saveAssessmentDraft/clearAssessmentDraft) -
+    // überlebt damit einen Auto-Lock oder ein Schließen der App mitten in
+    // der Erfassung, statt alle bereits eingegebenen Werte zu verlieren.
+    // Bewusst ohne Feld-Validierung, da die innere Struktur exakt dem
+    // Wizard-Objekt in ui/views.js entspricht und sich mit den Tests dort
+    // weiterentwickelt.
+    assessmentDraft: source.assessmentDraft && typeof source.assessmentDraft === "object" ? source.assessmentDraft : null
   };
 }
 
@@ -184,6 +453,8 @@ function normalizeHome(home) {
     homeId: ensureString(source.homeId || source.id) || generateId("home"),
     name: ensureString(source.name),
     adresse: ensureString(source.adresse || source.address),
+    verwaltungsEmail: ensureString(source.verwaltungsEmail),
+    hbPauschale: ["HB", "HBHP"].includes(source.hbPauschale) ? source.hbPauschale : "HB",
     patients: ensureArray(source.patients).map(normalizePatient)
   };
 }
@@ -253,6 +524,8 @@ function normalizeKilometerState(state) {
     })),
     kmExports: ensureArray(source.kmExports).map((item) => ({
       id: ensureString(item?.id) || generateId("kmexport"),
+      number: ensureString(item?.number),
+      therapistName: ensureString(item?.therapistName),
       von: ensureDeDateString(item?.von),
       bis: ensureDeDateString(item?.bis),
       erstesFahrtdatum: ensureDeDateString(item?.erstesFahrtdatum),
@@ -260,7 +533,8 @@ function normalizeKilometerState(state) {
       erstelltAm: ensureIsoString(item?.erstelltAm, new Date().toISOString()),
       gesamtKm: Number.isFinite(Number(item?.gesamtKm)) ? Number(item.gesamtKm) : 0,
       gesamtVerguetung: Number.isFinite(Number(item?.gesamtVerguetung)) ? Number(item.gesamtVerguetung) : 0,
-      fahrtIds: ensureArray(item?.fahrtIds).map((id) => ensureString(id)).filter(Boolean)
+      fahrtIds: ensureArray(item?.fahrtIds).map((id) => ensureString(id)).filter(Boolean),
+      snapshotHtml: ensureString(item?.snapshotHtml)
     }))
   };
 }
@@ -332,6 +606,44 @@ function normalizeNachbestellHistory(items) {
   });
 }
 
+function normalizeArzt(item) {
+  const source = item && typeof item === "object" ? item : {};
+  return {
+    id: ensureString(source.id) || generateId("arzt"),
+    name: ensureString(source.name),
+    adresse: ensureString(source.adresse),
+    email: ensureString(source.email),
+    createdAt: ensureIsoString(source.createdAt, new Date().toISOString()),
+    updatedAt: ensureIsoString(source.updatedAt, new Date().toISOString())
+  };
+}
+
+function normalizeFreikuvertHistory(items) {
+  return ensureArray(items).map((item) => {
+    const source = item && typeof item === "object" ? item : {};
+    return {
+      id: ensureString(source.id) || generateId("freikuvert"),
+      arztName: ensureString(source.arztName),
+      arztAdresse: ensureString(source.arztAdresse),
+      anzahl: Number.isFinite(Number(source.anzahl)) ? Number(source.anzahl) : 10,
+      therapistName: ensureString(source.therapistName),
+      createdAt: ensureIsoString(source.createdAt, new Date().toISOString())
+    };
+  });
+}
+
+function normalizeAutoExportHistory(items) {
+  return ensureArray(items).map((item) => {
+    const source = item && typeof item === "object" ? item : {};
+    return {
+      id: ensureString(source.id) || generateId("autoexport"),
+      createdAt: ensureIsoString(source.createdAt, new Date().toISOString()),
+      status: ["handled", "postponed", "auto-download"].includes(source.status) ? source.status : "postponed",
+      message: ensureString(source.message)
+    };
+  }).slice(0, 20);
+}
+
 export function finalizeAppStructure(data) {
   const base = createEmptyAppData();
   const source = data && typeof data === "object" ? data : {};
@@ -350,6 +662,7 @@ export function finalizeAppStructure(data) {
     exportTimestamp: ensureIsoString(source.exportTimestamp),
 
     settings: {
+      therapistId: ensureString(settings.therapistId) || generateId("therapist"),
       therapistName: ensureString(settings.therapistName),
       therapistFax: ensureString(settings.therapistFax),
       practicePhone: ensureString(settings.practicePhone),
@@ -358,7 +671,20 @@ export function finalizeAppStructure(data) {
       weeklyHours: ensureWeeklyHours(settings.weeklyHours),
       fastStartDatum: ensureString(settings.fastStartDatum),
       stundenStartsaldoMinuten: ensureIntegerNumber(settings.stundenStartsaldoMinuten, 0),
-      privacyMode: ["full", "privacy"].includes(settings.privacyMode) ? settings.privacyMode : "full",
+      jahresurlaubTage: ensureIntegerNumber(settings.jahresurlaubTage, 0),
+      fastiEnabled: ensureBoolean(settings.fastiEnabled, true),
+      dokuPruefungDeaktiviert: ensureBoolean(settings.dokuPruefungDeaktiviert, false),
+      zertifikate: {
+        kgzns: ensureBoolean(settings.zertifikate?.kgzns, false),
+        mt: ensureBoolean(settings.zertifikate?.mt, false),
+        mld: ensureBoolean(settings.zertifikate?.mld, false)
+      },
+      supportUrl: ensureString(settings.supportUrl),
+      buero: {
+        email: ensureString(settings.buero?.email)
+      },
+      assessmentIntervalMonths: [3, 6].includes(Number(settings.assessmentIntervalMonths)) ? Number(settings.assessmentIntervalMonths) : 3,
+      nurAktiveRezepte: ensureBoolean(settings.nurAktiveRezepte, false),
       createdAt: ensureIsoString(settings.createdAt, now),
       updatedAt: ensureIsoString(settings.updatedAt, now) || now
     },
@@ -387,17 +713,21 @@ export function finalizeAppStructure(data) {
 
     abgabeHistory: normalizeAbgabeHistory(source.abgabeHistory),
     nachbestellHistory: normalizeNachbestellHistory(source.nachbestellHistory),
+    aerzte: ensureArray(source.aerzte).map(normalizeArzt),
+    freikuvertHistory: normalizeFreikuvertHistory(source.freikuvertHistory),
+    autoExportHistory: normalizeAutoExportHistory(source.autoExportHistory),
 
     security: {
       log: ensureArray(source.security?.log),
-      lastSecurityChangeAt: ensureIsoString(source.security?.lastSecurityChangeAt),
-      privacyMode: ["full", "privacy"].includes(source.security?.privacyMode)
-        ? source.security.privacyMode
-        : (["full", "privacy"].includes(settings.privacyMode) ? settings.privacyMode : "full")
+      lastSecurityChangeAt: ensureIsoString(source.security?.lastSecurityChangeAt)
     },
 
     ui: {
-      lastBackupAt: ensureIsoString(source.ui?.lastBackupAt)
+      lastBackupAt: ensureIsoString(source.ui?.lastBackupAt),
+      lastAutoExportAt: ensureIsoString(source.ui?.lastAutoExportAt),
+      lastAutoBackupDownloadAt: ensureIsoString(source.ui?.lastAutoBackupDownloadAt),
+      lastDataChangeAt: ensureIsoString(source.ui?.lastDataChangeAt),
+      lastFastiWeeklySummaryAt: ensureIsoString(source.ui?.lastFastiWeeklySummaryAt)
     }
   };
 

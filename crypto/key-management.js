@@ -67,3 +67,21 @@ export async function unwrapDataKeyWithPIN(wrappedPayload, pin, pinSaltBytes) {
 
   return importKeyRaw(fromBase64(result.rawKeyBase64));
 }
+
+// Wie unwrapDataKeyWithPIN(), liefert aber einen EXTRAHIERBAREN dataKey
+// zurück - ausschließlich für changePIN() in security/auth.js gedacht, das
+// den Schlüssel direkt danach mit der neuen PIN erneut umschließen (also
+// exportieren) muss. Der normale Entsperren-Vorgang (unlockWithPIN) nutzt
+// weiterhin unwrapDataKeyWithPIN() mit nicht-extrahierbarem Schlüssel.
+export async function unwrapDataKeyWithPINExtractable(wrappedPayload, pin, pinSaltBytes) {
+  const pinKey = await deriveKeyFromPIN(pin, pinSaltBytes);
+  const result = await decryptJSON(
+    {
+      ivBase64: wrappedPayload.ivBase64,
+      cipherBase64: wrappedPayload.wrappedKeyBase64
+    },
+    pinKey
+  );
+
+  return importKeyRaw(fromBase64(result.rawKeyBase64), true);
+}
